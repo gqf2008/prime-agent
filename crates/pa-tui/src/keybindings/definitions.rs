@@ -348,7 +348,7 @@ pub const APP_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
     ),
     (
         "app.clipboard.pasteImage",
-        def!(&["ctrl+v"], "Paste image from clipboard"),
+        def!(&["ctrl+v"], "Paste image or file from clipboard"),
     ),
     (
         "app.clipboard.copyLoginUrl",

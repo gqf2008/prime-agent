@@ -92,43 +92,97 @@ fn prompt_may_have_been_sent(error: &anyhow::Error) -> bool {
 impl SessionUi {
     const MAX_PASTED_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 
-    /// Read the clipboard image and register it behind a new editor marker.
-    pub(super) async fn handle_clipboard_image_paste(&mut self, view: &mut AgentView) {
-        let Some(attachment) = crate::clipboard_image::read_clipboard_image().await else {
+    /// The paste key: attach the clipboard's image, or else the files a file manager copied
+    /// (images among them become attachments, every other file keeps its path as text). The
+    /// attachment is never gated on the model here: the daemon routes an image turn to the
+    /// configured image model (or the provider answers), so a non-image model is the wrong
+    /// authority for what the editor accepts.
+    pub(super) async fn handle_clipboard_paste(&mut self, view: &mut AgentView) {
+        if let Some(attachment) = crate::clipboard_paste::read_clipboard_image().await {
+            self.attach_pasted_image(attachment, view);
+            self.dirty = true;
+            return;
+        }
+        let files = crate::paste_paths::PastedFile::existing(
+            crate::clipboard_paste::read_clipboard_files().await,
+        );
+        if files.is_empty() {
+            return;
+        }
+        self.files_pasted("clipboard");
+        self.attach_pasted_files(files, view);
+        self.dirty = true;
+    }
+
+    /// A paste whose whole payload is file paths: supported images become `[image #N]`
+    /// attachments, other files keep their path as text. Returns whether the payload was a
+    /// file paste (the terminal delivers a dropped or copied file as its path text).
+    pub(super) fn handle_file_path_paste(&mut self, text: &str, view: &mut AgentView) -> bool {
+        let Some(files) = crate::paste_paths::pasted_files(text) else {
+            return false;
+        };
+        self.files_pasted("path");
+        self.attach_pasted_files(files, view);
+        self.dirty = true;
+        true
+    }
+
+    /// The file-paste adoption event: fire-and-forget off the input path.
+    fn files_pasted(&self, source: &'static str) {
+        let Some(telemetry) = self.telemetry.clone() else {
             return;
         };
+        tokio::spawn(async move {
+            telemetry.files_pasted(source).await;
+        });
+    }
+
+    /// Insert one paste's files as ONE editor paste — a single undo step, the selection
+    /// replaced, and the editor's own path-spacing rule — images behind their markers,
+    /// every other file as its path.
+    fn attach_pasted_files(
+        &mut self,
+        files: Vec<crate::paste_paths::PastedFile>,
+        view: &mut AgentView,
+    ) {
+        let mut chunks: Vec<String> = Vec::with_capacity(files.len());
+        for file in files {
+            match file.image {
+                Some(image) => chunks.push(self.register_pasted_image(image, view)),
+                None => chunks.push(file.path.display().to_string()),
+            }
+        }
+        view.editor.handle_paste(&chunks.join(" "));
+    }
+
+    /// Attach one image (the clipboard bitmap) through the same single-paste path.
+    fn attach_pasted_image(&mut self, attachment: LoadedImage, view: &mut AgentView) {
+        let marker = self.register_pasted_image(attachment, view);
+        view.editor.handle_paste(&marker);
+    }
+
+    /// Register one image attachment behind a new editor marker and answer the marker text.
+    fn register_pasted_image(&mut self, attachment: LoadedImage, view: &mut AgentView) -> String {
         let marker_id = self.next_image_marker_id;
         self.next_image_marker_id += 1;
         let mime_type = attachment.mime_type.clone();
         self.remember_pasted_image(marker_id, attachment, view);
-        view.editor
-            .insert_text_at_cursor(&format_image_marker(marker_id));
+        // `images.blockImages` has no daemon-side refusal (the route is simply skipped), so
+        // the paste is the only surface that can tell the user the attachment will not be
+        // sent. The model-capability hint stays gone: routing decides that, not the editor.
+        if self
+            .client_settings
+            .as_ref()
+            .is_some_and(|settings| settings.block_images())
+        {
+            self.note("Images are blocked (settings: block images).", view);
+        }
         if let Some(telemetry) = self.telemetry.clone() {
             tokio::spawn(async move {
                 telemetry.image_pasted(&mime_type).await;
             });
         }
-        if !self.model_supports_images(view) {
-            // The attachment is never silently omitted: the routed note or the refusal
-            // names the fix; host-blocked images surface the block.
-            let settings = self.client_settings.as_ref();
-            let blocked = settings.is_some_and(|settings| settings.block_images());
-            let routed = settings.is_some_and(|settings| settings.image_model().is_some());
-            if blocked {
-                self.note("Images are blocked (settings: block images).", view);
-            } else if routed {
-                self.note(
-                    "Current model does not support images; the attachment routes to the configured image model.",
-                    view,
-                );
-            } else {
-                self.note(
-                    "Current model does not support images. Set settings.imageModel to route image turns.",
-                    view,
-                );
-            }
-        }
-        self.dirty = true;
+        format_image_marker(marker_id)
     }
 
     /// Record a pasted image, evicting the oldest entries once the retained bytes exceed
@@ -370,16 +424,6 @@ impl SessionUi {
         view.editor.set_text("");
         self.dirty = true;
         self.note("Stashed prompt", view);
-    }
-
-    /// Whether the current model takes image input; unknown models are assumed
-    /// capable (the daemon re-checks). The catalog lookup is provider-aware: a
-    /// same-id entry under another provider is a different model.
-    pub(super) fn model_supports_images(&self, view: &AgentView) -> bool {
-        let Some(model) = self.current_model_entry(view) else {
-            return true;
-        };
-        model.input.contains(&pa_types::ai::ModelInput::Image)
     }
 
     /// Submit a prompt (the Enter path): the user message arrives back as a `message_start` event

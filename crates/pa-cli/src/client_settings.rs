@@ -181,9 +181,6 @@ impl ClientSettings for CliClientSettings {
         bool
     );
 
-    fn image_model(&self) -> Option<String> {
-        self.manager().get_image_model()
-    }
     setting!(
         enable_skill_commands,
         set_enable_skill_commands,

@@ -1019,6 +1019,7 @@ const TUI_EXIT: EventRule = EventRule {
         ("tui_subagents_open_count", optional(count())),
         ("tui_scoped_agent_count", optional(count())),
         ("tui_image_paste_count", optional(count())),
+        ("tui_file_paste_count", optional(count())),
         ("tui_input_queued_count", optional(count())),
         ("tui_queue_edit_count", optional(count())),
         ("tui_prompt_stash_count", optional(count())),

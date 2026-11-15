@@ -5857,3 +5857,97 @@ async fn assert_close_reason_survives_late_turn_status(reason: &str, explanation
     );
     drop(supervisor);
 }
+
+/// A paste whose whole payload is an image path (how a terminal delivers a dropped file)
+/// attaches the image instead of inserting the path text.
+#[tokio::test]
+async fn tui_paste_of_an_image_path_attaches_the_image() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let agent_dir = dir.path().join("agent");
+    let session_dir = agent_dir.join("sessions");
+    std::fs::create_dir_all(&session_dir).expect("session dir");
+    let png_path = dir.path().join("dropped.png");
+    std::fs::write(&png_path, MINIMAL_PNG).expect("write fixture image");
+    let supervisor = spawn_supervisor(dir.path());
+    let script = serde_json::json!({
+        "engine": "faux",
+        "responses": [{ "text": "path paste reply", "delayMs": 10 }],
+    });
+    let script_path = dir.path().join("script.json");
+    let session = create_session_via_daemon(
+        &supervisor.socket,
+        &script_path,
+        &script,
+        dir.path(),
+        &session_dir,
+    )
+    .await;
+
+    let options = pa_tui::interactive::InteractiveOptions {
+        models: None,
+        provider_auth: None,
+        traces: None,
+        update_commands: None,
+        socket_path: supervisor.socket.clone(),
+        cwd: dir.path().to_path_buf(),
+        session_dir: Some(session_dir.clone()),
+        script_path: Some(script_path.clone()),
+        model_selection: pa_tui::interactive::ModelSelection::default(),
+        model_catalog: Vec::new(),
+        model_configured_providers: std::collections::HashSet::default(),
+        model_recent_models: Vec::new(),
+        default_thinking_level: None,
+        no_session: false,
+        session: pa_tui::interactive::SessionSelection::Attach(session.clone()),
+        show_images: true,
+        fullscreen_mouse: true,
+        initial_message: None,
+        theme: "prime".to_string(),
+        code_block_indent: "  ".to_string(),
+        tree_filter_mode: String::new(),
+        branch_summary_skip_prompt: false,
+        version: "0.0.0".to_string(),
+        onboarding: None,
+        telemetry_disabled: None,
+        client_auth: None,
+        client_settings: None,
+        telemetry: None,
+        keybindings: pa_tui::keybindings::KeybindingsManager::new(),
+        prompt_stash: std::sync::Arc::default(),
+        session_rlm_depth: None,
+        session_has_children: false,
+        restore_dock_focus: false,
+    };
+    let plan = pa_tui::interactive::HeadlessPlan {
+        steps: vec![
+            pa_tui::interactive::HeadlessStep::WaitIdle { timeout_ms: 10_000 },
+            pa_tui::interactive::HeadlessStep::Paste(png_path.display().to_string()),
+            pa_tui::interactive::HeadlessStep::WaitRender {
+                needle: "[image #1]".to_string(),
+                timeout_ms: 5_000,
+            },
+            pa_tui::interactive::HeadlessStep::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+            )),
+            pa_tui::interactive::HeadlessStep::WaitIdle { timeout_ms: 30_000 },
+        ],
+        width: 130,
+        height: 30,
+    };
+    let outcome = run_headless_bounded(options, plan)
+        .await
+        .expect("interactive run");
+    let rendered = outcome.frames.join("\n");
+    assert!(
+        rendered.contains("[image #1]"),
+        "the dropped image path attached the image:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("dropped.png"),
+        "the path text never reached the editor:\n{rendered}"
+    );
+    drop(supervisor);
+}

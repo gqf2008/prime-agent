@@ -1,8 +1,8 @@
-//! Reading an image from the system clipboard for editor paste: prefer a supported
-//! image type (PNG, JPEG, GIF, WebP) and hand back the payload plus its mime type.
-//! Every reader is best-effort: a missing tool, an empty clipboard, or an unsupported
-//! type returns `None` (dropped, never sent).
+//! Reading clipboard payloads for editor paste: a clipboard image (PNG, JPEG, GIF, WebP) and
+//! the files a file manager copied. Every reader is best-effort: a missing tool, an empty
+//! clipboard, or an unsupported type returns nothing (dropped, never sent).
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tokio::process::Command;
@@ -13,6 +13,9 @@ const DEFAULT_LIST_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_POWERSHELL_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_MAX_BUFFER_BYTES: usize = 50 * 1024 * 1024;
+
+/// The `text/uri-list` clipboard flavor carrying copied files on X11/Wayland.
+const URI_LIST: &str = "text/uri-list";
 
 /// One clipboard image: the base64 payload plus its sniffed mime type.
 pub type ClipboardImage = LoadedImage;
@@ -69,8 +72,13 @@ async fn run_command(program: &str, args: &[&str], timeout: Duration) -> Option<
     Some(output.stdout)
 }
 
-/// Whether this is a WSL session.
+/// Whether this is a WSL session. The env markers are Windows-side too (`WSLENV` is set
+/// for interop), so they only count on a Linux build: a native-Windows process must never
+/// take the WSL path conversions.
 fn is_wsl() -> bool {
+    if std::env::consts::OS != "linux" {
+        return false;
+    }
     if std::env::var_os("WSL_DISTRO_NAME").is_some() || std::env::var_os("WSLENV").is_some() {
         return true;
     }
@@ -92,6 +100,28 @@ fn stdout_lines(stdout: &[u8]) -> Vec<String> {
         .map(|line| line.trim().to_string())
         .filter(|line| !line.is_empty())
         .collect()
+}
+
+/// A temp file for one clipboard read; the caller reads it back and removes it.
+fn clipboard_temp_path(extension: &str) -> Option<PathBuf> {
+    let dir = std::env::temp_dir();
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(format!("prime-agent-clip-{}.{extension}", unique_suffix())))
+}
+
+/// The path as the Windows clipboard host sees it: a WSL distro path converts through
+/// `wslpath`, native Windows is already a Windows path.
+async fn windows_path_for(path: &Path) -> Option<String> {
+    let raw = if is_wsl() {
+        String::from_utf8_lossy(
+            &run_command("wslpath", &["-w", path.to_str()?], DEFAULT_LIST_TIMEOUT).await?,
+        )
+        .trim()
+        .to_string()
+    } else {
+        path.to_str()?.to_string()
+    };
+    (!raw.is_empty()).then_some(raw)
 }
 
 /// `wl-paste` (Wayland): list the offered types, pick the preferred
@@ -140,6 +170,37 @@ async fn read_via_xclip() -> Option<ClipboardImage> {
     None
 }
 
+/// The copied files an X11/Wayland clipboard carries as `text/uri-list`.
+async fn read_files_via_wl_paste() -> Vec<PathBuf> {
+    let Some(types) = run_command("wl-paste", &["--list-types"], DEFAULT_LIST_TIMEOUT).await else {
+        return Vec::new();
+    };
+    if !stdout_lines(&types).iter().any(|kind| kind == URI_LIST) {
+        return Vec::new();
+    }
+    run_command(
+        "wl-paste",
+        &["--type", URI_LIST, "--no-newline"],
+        DEFAULT_READ_TIMEOUT,
+    )
+    .await
+    .map(|bytes| crate::paste_paths::uri_list_paths(&String::from_utf8_lossy(&bytes)))
+    .unwrap_or_default()
+}
+
+/// The copied files an X11 clipboard carries as `text/uri-list` (a missing target reads
+/// nothing).
+async fn read_files_via_xclip() -> Vec<PathBuf> {
+    run_command(
+        "xclip",
+        &["-selection", "clipboard", "-t", URI_LIST, "-o"],
+        DEFAULT_READ_TIMEOUT,
+    )
+    .await
+    .map(|bytes| crate::paste_paths::uri_list_paths(&String::from_utf8_lossy(&bytes)))
+    .unwrap_or_default()
+}
+
 /// Validate clipboard bytes by content (the clipboard-reported type may be wrong and
 /// there is no converter to fall back on — content sniffing is this port's equivalent of
 /// TS's Photon conversion). Returns the payload with the sniffed mime type, or `None`.
@@ -155,25 +216,12 @@ fn clipboard_image_from_bytes(bytes: Vec<u8>) -> Option<ClipboardImage> {
     })
 }
 
-/// WSL: PowerShell reads the Windows clipboard and saves it as a PNG at a
-/// temp path, which WSL reads back and removes.
+/// PowerShell (WSL reads the Windows host clipboard; native Windows its own): the script
+/// saves the clipboard bitmap as a PNG at a temp path, which this process reads back and
+/// removes.
 async fn read_via_powershell() -> Option<ClipboardImage> {
-    let temp_dir = std::env::temp_dir();
-    std::fs::create_dir_all(&temp_dir).ok()?;
-    let temp_path = temp_dir.join(format!("prime-agent-clip-{}.png", unique_suffix()));
-    let windows_path = String::from_utf8_lossy(
-        &run_command(
-            "wslpath",
-            &["-w", temp_path.to_str()?],
-            DEFAULT_LIST_TIMEOUT,
-        )
-        .await?,
-    )
-    .trim()
-    .to_string();
-    if windows_path.is_empty() {
-        return None;
-    }
+    let temp_path = clipboard_temp_path("png")?;
+    let windows_path = windows_path_for(&temp_path).await?;
     let escaped_path = windows_path.replace('\'', "''");
     let script = [
         "Add-Type -AssemblyName System.Windows.Forms",
@@ -199,6 +247,47 @@ async fn read_via_powershell() -> Option<ClipboardImage> {
     image
 }
 
+/// PowerShell's copied-file drop list (the Windows clipboard; WSL reads the host's):
+/// one path per line, UTF-8. WSL gets the host's `C:\...` paths, so each one converts
+/// through `wslpath` to a path this process can open.
+async fn read_files_via_powershell() -> Vec<PathBuf> {
+    let script = [
+        "Add-Type -AssemblyName System.Windows.Forms",
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+        "$files = [System.Windows.Forms.Clipboard]::GetFileDropList()",
+        "foreach ($file in $files) { Write-Output $file }",
+    ]
+    .join("; ");
+    let Some(stdout) = run_command(
+        "powershell.exe",
+        &["-NoProfile", "-Command", &script],
+        DEFAULT_POWERSHELL_TIMEOUT,
+    )
+    .await
+    else {
+        return Vec::new();
+    };
+    let paths: Vec<PathBuf> = stdout_lines(&stdout)
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    if !is_wsl() {
+        return paths;
+    }
+    let mut distro_paths = Vec::with_capacity(paths.len());
+    for path in paths {
+        let Some(raw) = path.to_str() else { continue };
+        let Some(bytes) = run_command("wslpath", &["-u", raw], DEFAULT_LIST_TIMEOUT).await else {
+            continue;
+        };
+        let converted = String::from_utf8_lossy(&bytes).trim().to_string();
+        if !converted.is_empty() {
+            distro_paths.push(PathBuf::from(converted));
+        }
+    }
+    distro_paths
+}
+
 /// A unique temp-file suffix: the per-process random hasher seeded by the
 /// OS plus the current nanosecond clock.
 fn unique_suffix() -> String {
@@ -217,9 +306,7 @@ fn unique_suffix() -> String {
 /// macOS: a JavaScript-for-Automation script reads the pasteboard's PNG data and
 /// writes it to a temp file, which we read back and remove. Non-PNG flavors are not read.
 async fn read_via_osascript() -> Option<ClipboardImage> {
-    let temp_dir = std::env::temp_dir();
-    std::fs::create_dir_all(&temp_dir).ok()?;
-    let temp_path = temp_dir.join(format!("prime-agent-clip-{}.png", unique_suffix()));
+    let temp_path = clipboard_temp_path("png")?;
     let path_str = temp_path.to_str()?.to_string();
     let script = format!(
         r"ObjC.import('Cocoa');
@@ -241,6 +328,7 @@ if (!types.containsObject($.NSPasteboardTypePNG)) {{
     )
     .await?;
     if String::from_utf8_lossy(&output).trim() != "ok" {
+        let _ = std::fs::remove_file(&temp_path);
         return None;
     }
     let image = crate::image_load::load_image_from_path(&temp_path)
@@ -250,14 +338,68 @@ if (!types.containsObject($.NSPasteboardTypePNG)) {{
     image
 }
 
+/// macOS: the copied files (`NSFilenamesPboardType`), one path per line through a temp
+/// file — the pasteboard carries no image-bitmap equivalent for a file copy.
+async fn read_files_via_osascript() -> Vec<PathBuf> {
+    let Some(temp_path) = clipboard_temp_path("txt") else {
+        return Vec::new();
+    };
+    let Some(path_str) = temp_path.to_str().map(str::to_string) else {
+        return Vec::new();
+    };
+    let script = format!(
+        r"ObjC.import('Cocoa');
+const pb = $.NSPasteboard.generalPasteboard;
+const list = pb.propertyListForType('NSFilenamesPboardType');
+if (!list) {{
+    'empty'
+}} else {{
+    const paths = ObjC.unwrap(list);
+    const text = $.NSString.alloc.initWithUTF8String(paths.join('\n'));
+    text.writeToFileAtomicallyEncodingError('{path_str}', false, $.NSUTF8StringEncoding, null);
+    'ok'
+}}"
+    );
+    let output = run_command(
+        "osascript",
+        &["-l", "JavaScript", "-e", &script],
+        // The same JavaScript-for-Automation launch the image reader grants 3 s: a 1 s
+        // list timeout routinely expires before the interpreter has started.
+        DEFAULT_READ_TIMEOUT,
+    )
+    .await;
+    let files = match output {
+        Some(stdout) if String::from_utf8_lossy(&stdout).trim() == "ok" => {
+            std::fs::read_to_string(&temp_path)
+                .map(|text| {
+                    text.lines()
+                        .map(str::trim)
+                        .filter(|line| !line.is_empty())
+                        .map(PathBuf::from)
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+        _ => Vec::new(),
+    };
+    let _ = std::fs::remove_file(&temp_path);
+    files
+}
+
+/// The test seams: a harness without a display server cannot drive the real clipboard
+/// readers, so a fixture stands in for the clipboard and travels the exact paste path from
+/// there. Never set by the product.
+fn test_seam(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name).map(PathBuf::from)
+}
+
 /// Read an image from the system clipboard, if one of the supported types is present.
-/// Wayland tries `wl-paste` then `xclip`; WSL additionally falls through to PowerShell;
+/// Wayland tries `wl-paste` then `xclip`; WSL and native Windows read through PowerShell;
 /// X11 uses `xclip`; macOS reads through osascript. Termux exposes no clipboard image path.
 pub async fn read_clipboard_image() -> Option<ClipboardImage> {
-    // Verification seam (never set by the product): a harness without a display server
-    // cannot drive the real clipboard readers, so a fixture file stands in for the
-    // clipboard and travels the exact paste path from there.
-    if let Some(path) = std::env::var_os("PRIME_AGENT_TEST_CLIPBOARD_IMAGE") {
+    // Verification seam (never set by the product): a fixture file stands in for the
+    // clipboard image.
+    if let Some(path) = test_seam("PRIME_AGENT_TEST_CLIPBOARD_IMAGE") {
         return std::fs::read(path)
             .ok()
             .and_then(clipboard_image_from_bytes);
@@ -284,8 +426,53 @@ pub async fn read_clipboard_image() -> Option<ClipboardImage> {
             }
             image
         }
+        "windows" => read_via_powershell().await,
         "macos" => read_via_osascript().await,
         _ => None,
+    }
+}
+
+/// The files a file manager copied, by path. Wayland reads the `text/uri-list` flavor
+/// through `wl-paste` then `xclip`; WSL and native Windows read the PowerShell drop list;
+/// X11 uses `xclip`; macOS reads the pasteboard's filename property. Empty when the
+/// clipboard holds no files.
+pub async fn read_clipboard_files() -> Vec<PathBuf> {
+    // Verification seam (never set by the product): newline-separated fixture paths.
+    if let Some(path) = test_seam("PRIME_AGENT_TEST_CLIPBOARD_FILES") {
+        return std::fs::read_to_string(path)
+            .map(|text| {
+                text.lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(PathBuf::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+    if std::env::var_os("TERMUX_VERSION").is_some() {
+        return Vec::new();
+    }
+    match std::env::consts::OS {
+        "linux" => {
+            let wsl = is_wsl();
+            let wayland = is_wayland_session();
+            let mut files = Vec::new();
+            if wayland || wsl {
+                files = read_files_via_wl_paste().await;
+            }
+            // The image reader's same fallback: `wl-paste` may be absent (or the copy came
+            // from an XWayland app), so `xclip` gets its turn either way.
+            if files.is_empty() {
+                files = read_files_via_xclip().await;
+            }
+            if files.is_empty() && wsl {
+                files = read_files_via_powershell().await;
+            }
+            files
+        }
+        "windows" => read_files_via_powershell().await,
+        "macos" => read_files_via_osascript().await,
+        _ => Vec::new(),
     }
 }
 
@@ -330,6 +517,26 @@ mod tests {
     fn stdout_lines_trim_and_drop_empty() {
         let stdout = b"image/png\r\ntext/plain\n\n\r\n";
         assert_eq!(stdout_lines(stdout), vec!["image/png", "text/plain"]);
+    }
+
+    /// The verification seam stands in for a file-manager copy: newline-separated fixture
+    /// paths, trimmed, blanks dropped (the harness has no display server to read a real
+    /// clipboard from).
+    #[tokio::test]
+    async fn the_test_seam_stands_in_for_the_copied_file_list() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let list = dir.path().join("clipboard-files.txt");
+        std::fs::write(&list, "\n /tmp/shot.png \r\n/tmp/notes.txt\n").expect("write fixture");
+        std::env::set_var("PRIME_AGENT_TEST_CLIPBOARD_FILES", &list);
+        let files = read_clipboard_files().await;
+        std::env::remove_var("PRIME_AGENT_TEST_CLIPBOARD_FILES");
+        assert_eq!(
+            files,
+            vec![
+                PathBuf::from("/tmp/shot.png"),
+                PathBuf::from("/tmp/notes.txt")
+            ]
+        );
     }
 
     #[test]

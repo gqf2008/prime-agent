@@ -290,6 +290,12 @@ impl SessionUi {
             self.dirty = true;
             return;
         }
+        // A paste whose whole payload is file paths is a file paste, not text: a terminal
+        // delivers a dropped or copied file as its path text. Images attach, other files
+        // keep their paths; an ordinary paste falls through to the editor verbatim.
+        if self.handle_file_path_paste(text, view) {
+            return;
+        }
         let _ = view.editor.handle_paste(text);
     }
 
@@ -489,7 +495,7 @@ impl SessionUi {
             .keybindings()
             .matches(&id, "app.clipboard.pasteImage")
         {
-            self.handle_clipboard_image_paste(view).await;
+            self.handle_clipboard_paste(view).await;
             return Ok(());
         }
         if view.editor.keybindings().matches(&id, "app.input.clear") {

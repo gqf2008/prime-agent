@@ -215,9 +215,14 @@ pub trait InteractionTelemetry: Send + Sync {
         menu: &'static str,
         source: &'static str,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
-    /// An image was pasted into the editor from the clipboard (event `tui image pasted`);
-    /// `mime_type` is the attachment's sniffed format.
+    /// An image was pasted into the editor — the clipboard bitmap, a copied image file, or a
+    /// dropped image path (event `tui image pasted`); `mime_type` is the attachment's sniffed
+    /// format.
     fn image_pasted(&self, mime_type: &str) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
+    /// A paste resolved to files (event `tui file paste`): `source` is `clipboard` (the files
+    /// a file manager copied, behind the paste key) or `path` (a paste whose payload is image
+    /// paths — how a terminal delivers a dropped file). Never carries a path or a name.
+    fn files_pasted(&self, source: &'static str) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
     /// A submission parked in the follow-up queue behind a running turn: `lane` is `steering`
     /// (Enter) / `follow_up` (the follow-up key); `steering_mode` is the session's queue delivery
     /// mode (TS `steeringMode`: `all` = batched at the boundary, `one-at-a-time` = one steer per

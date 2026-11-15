@@ -148,7 +148,7 @@ pub fn hotkeys_guide(kb: &KeybindingsManager) -> String {
 | `{follow_up}` | Queue follow-up message |
 | `{browse_queue}` / `{browse_queue_newer}` | Browse and edit queued messages |
 | `{reorder_queue}` | Reorder the selected queued message |
-| `{paste_image}` | Paste image from clipboard |
+| `{paste_image}` | Paste image or file from clipboard |
 | `/` | Slash commands |
 
 **Transcript navigation (the always-fullscreen surface)**

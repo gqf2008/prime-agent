@@ -1,0 +1,1 @@
+- The prompt accepts pasted images and files: `ctrl+v` attaches the clipboard image, or the files copied in a file manager (images as `[image #N]` attachments, every other file as its path), and dropping a file into the terminal attaches it when it is an image. Windows and WSL read the clipboard through PowerShell, X11/Wayland through `xclip`/`wl-paste`, macOS through osascript.

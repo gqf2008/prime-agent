@@ -231,6 +231,11 @@ impl pa_tui::interactive::InteractionTelemetry for CliInteractionTelemetry {
         Box::pin(std::future::ready(()))
     }
 
+    fn files_pasted(&self, _source: &'static str) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        self.count("tui_file_paste_count");
+        Box::pin(std::future::ready(()))
+    }
+
     fn queued_input(
         &self,
         _lane: &'static str,

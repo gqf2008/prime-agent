@@ -86,9 +86,6 @@ pub trait ClientSettings: Send + Sync {
     ///
     /// Returns `Err` when the settings store fails.
     fn set_block_images(&self, blocked: bool) -> Result<()>;
-    /// `imageModel` ("provider/model-id" or a bare id; unset by default),
-    /// read-only for the paste-time hint.
-    fn image_model(&self) -> Option<String>;
     /// `enableSkillCommands` (TS default true).
     fn enable_skill_commands(&self) -> bool;
     /// Persists `enableSkillCommands` to the global scope.
