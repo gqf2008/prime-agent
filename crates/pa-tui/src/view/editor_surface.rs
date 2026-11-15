@@ -45,6 +45,10 @@ pub(crate) fn render(
     placeholder: Option<&str>,
 ) -> EditorBox {
     let bg = crate::chrome::editor_background(theme);
+    // The editor paints its own surface, so its text must not inherit the terminal's
+    // foreground: a light palette on a dark terminal (or the reverse) would otherwise
+    // render the draft in the surface's own colour.
+    let text_style = bg.patch(theme.fg_style(ThemeColor::UserMessageText));
     let border = theme.fg_style(ThemeColor::BorderMuted);
     let padding_x = 2usize;
     let content_width = width.saturating_sub(padding_x * 2).max(1);
@@ -149,7 +153,7 @@ pub(crate) fn render(
             &highlights,
             chunk_selection(selection, line.source_line, line.source_start, text),
             cursor_pos,
-            bg,
+            text_style,
         ));
         let mut used = str_width(text);
         if cursor_pos == Some(text.chars().count()) {

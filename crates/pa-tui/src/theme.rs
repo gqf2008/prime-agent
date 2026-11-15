@@ -979,6 +979,97 @@ mod tests {
         }
     }
 
+    /// WCAG relative luminance of a resolved colour (indexed slots resolve through the
+    /// palette; anything the palette does not know counts as black).
+    fn wcag_luminance(color: Color) -> f64 {
+        let channel = |value: u8| {
+            let scaled = f64::from(value) / 255.0;
+            if scaled <= 0.039_28 {
+                scaled / 12.92
+            } else {
+                ((scaled + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let rgb = match color {
+            Color::Rgb(r, g, b) => Some((u16::from(r), u16::from(g), u16::from(b))),
+            Color::Indexed(index) => indexed_to_rgb(index),
+            _ => None,
+        };
+        let Some((r, g, b)) = rgb else {
+            return 0.0;
+        };
+        let (r, g, b) = (r as u8, g as u8, b as u8);
+        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    }
+
+    /// Every slot that paints onto a theme-owned background must carry its own colour and
+    /// stay readable. These slots used to be `""` (the terminal's foreground) while the
+    /// theme painted its own surface under them: a light palette on a light terminal
+    /// painted the input area and the echo at 1.03:1 — invisible — and a dark palette on a
+    /// dark terminal did the same (the 2026-11-15 "input area unreadable in light mode"
+    /// report). `text` and `toolTitle` stay `""` on purpose: they render on the terminal's
+    /// own canvas, where the terminal's foreground is the correct colour.
+    ///
+    /// Reverting any listed slot's colour to `""` makes this test red.
+    #[test]
+    fn painted_surfaces_carry_explicit_readable_text() {
+        // (text slot, the surface it paints on, minimum WCAG ratio): message bodies take
+        // the AA body-text bar, secondary surfaces the large-text/UI bar.
+        const PAIRS: [(ThemeColor, ThemeBg, f64); 3] = [
+            (ThemeColor::UserMessageText, ThemeBg::UserMessageBg, 4.5),
+            (ThemeColor::CustomMessageText, ThemeBg::CustomMessageBg, 4.5),
+            (ThemeColor::ToolOutput, ThemeBg::ToolPanelBg, 3.0),
+        ];
+        // The diff rows' pre-existing colours are asserted explicit only: the 256-colour
+        // cube quantizes them across their own bar (prime's added green lands at 2.95:1),
+        // and tuning that palette is not this fix's subject.
+        const EXPLICIT: [(ThemeColor, ThemeBg); 2] = [
+            (ThemeColor::ToolDiffAdded, ThemeBg::ToolDiffAddedBg),
+            (ThemeColor::ToolDiffRemoved, ThemeBg::ToolDiffRemovedBg),
+        ];
+        for name in ["prime", "dark", "light"] {
+            for mode in [ColorMode::TrueColor, ColorMode::Color256] {
+                let theme = Theme::builtin(name, mode);
+                for (text, surface, minimum) in PAIRS {
+                    let foreground = theme
+                        .fg_style(text)
+                        .fg
+                        .unwrap_or_else(|| panic!("{name}/{mode:?}: {text:?} resolves"));
+                    let background = theme
+                        .bg_color(surface)
+                        .unwrap_or_else(|| panic!("{name}/{mode:?}: {surface:?} resolves"));
+                    assert_ne!(
+                        foreground,
+                        Color::Reset,
+                        "{name}/{mode:?}: {text:?} must not inherit the terminal foreground"
+                    );
+                    let (one, other) = (wcag_luminance(foreground), wcag_luminance(background));
+                    let (light, dark) = (one.max(other), one.min(other));
+                    let ratio = (light + 0.05) / (dark + 0.05);
+                    assert!(
+                        ratio >= minimum,
+                        "{name}/{mode:?}: {text:?} on {surface:?} reads {ratio:.2}:1 (needs {minimum}:1)"
+                    );
+                }
+                for (text, surface) in EXPLICIT {
+                    let foreground = theme
+                        .fg_style(text)
+                        .fg
+                        .unwrap_or_else(|| panic!("{name}/{mode:?}: {text:?} resolves"));
+                    assert!(
+                        theme.bg_color(surface).is_some(),
+                        "{name}/{mode:?}: {surface:?} resolves"
+                    );
+                    assert_ne!(
+                        foreground,
+                        Color::Reset,
+                        "{name}/{mode:?}: {text:?} must not inherit the terminal foreground"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn the_hover_band_and_the_selection_share_one_color() {
         for name in ["prime", "dark", "light"] {

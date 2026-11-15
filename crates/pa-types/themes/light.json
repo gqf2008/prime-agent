@@ -34,9 +34,9 @@
 
 		"selectedBg": "selectedBg",
 		"userMessageBg": "userMsgBg",
-		"userMessageText": "",
+		"userMessageText": "#1f1f1f",
 		"customMessageBg": "customMsgBg",
-		"customMessageText": "",
+		"customMessageText": "#1f1f1f",
 		"customMessageLabel": "#7e57c2",
 		"refinementHeader": "#7146ab",
 		"refinementSummary": "#8a70ad",

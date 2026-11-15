@@ -3,7 +3,7 @@
 //! in `success` / `mdLink`. The outcome rows render in the status-row class instead
 //! (operator ruling 2026-09-25: command output is system output, never user text).
 
-use crate::theme::{Theme, ThemeBg};
+use crate::theme::{Theme, ThemeBg, ThemeColor};
 use crate::width::str_width;
 use crate::{Line, Span};
 use ratatui::style::Style;
@@ -65,11 +65,15 @@ fn source_paragraphs(text: &str, theme: &Theme) -> Vec<Line> {
     // between them.
     let mut styled: Line = Vec::new();
     let mut offset = 0usize;
+    // The block paints its own background, so its plain text takes the theme's
+    // user-message colour rather than the terminal's foreground.
+    let body = theme.fg_style(ThemeColor::UserMessageText);
     for span in crate::prompt_highlight::slash_command_source_spans(text) {
         if span.start > offset {
-            styled.push(Span::raw(crate::prompt_highlight::char_slice(
-                text, offset, span.start,
-            )));
+            styled.push(Span::styled(
+                crate::prompt_highlight::char_slice(text, offset, span.start),
+                body,
+            ));
         }
         styled.push(theme.fg(
             span.color,
@@ -79,9 +83,10 @@ fn source_paragraphs(text: &str, theme: &Theme) -> Vec<Line> {
     }
     let total = text.chars().count();
     if offset < total {
-        styled.push(Span::raw(crate::prompt_highlight::char_slice(
-            text, offset, total,
-        )));
+        styled.push(Span::styled(
+            crate::prompt_highlight::char_slice(text, offset, total),
+            body,
+        ));
     }
     // Wrap the styled line, splitting on the source newlines.
     let mut paragraphs: Vec<Line> = vec![Vec::new()];
@@ -166,7 +171,7 @@ mod tests {
             on_bg(theme.fg_style(ThemeColor::Accent)),
             on_bg(theme.fg_style(ThemeColor::Success)),
             on_bg(theme.fg_style(ThemeColor::MdLink)),
-            Style::default().bg(bg),
+            on_bg(theme.fg_style(ThemeColor::UserMessageText)),
             theme.bg_style(ThemeBg::UserMessageBg),
         )
     }
