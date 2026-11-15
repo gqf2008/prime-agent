@@ -453,4 +453,59 @@ mod tests {
             );
         }
     }
+
+    /// The operator's multimodal rule: a turn carrying an image reaches the request as an
+    /// image block whenever the model declares image input, and never as a silent
+    /// placeholder. Dropping `image` from the model's declared inputs flips both assertions —
+    /// that is the tooth this path was missing.
+    #[test]
+    fn a_user_image_reaches_the_request_when_the_model_declares_it() {
+        let request = |model: &Model| {
+            let messages: Vec<Message> = serde_json::from_value(json!([
+                {"role": "user", "content": [
+                    {"type": "text", "text": "what is this?"},
+                    {"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"}
+                ], "timestamp": 1}
+            ]))
+            .expect("messages json");
+            let transformed =
+                crate::providers::transform_messages::transform_messages_with_normalizer(
+                    &messages,
+                    model,
+                    &|_, _, _| None,
+                );
+            let context = Context {
+                system_prompt: None,
+                messages: transformed,
+                tools: None,
+            };
+            convert_messages(&context, model, false, None)
+        };
+        let carries_image = |params: &[Value]| {
+            params.iter().any(|message| {
+                message["content"]
+                    .as_array()
+                    .is_some_and(|blocks| blocks.iter().any(|block| block["type"] == "image"))
+            })
+        };
+        let vision = model(&json!({
+            "id": "claude-sonnet-5", "provider": "anthropic", "input": ["text", "image"]
+        }));
+        let params = request(&vision);
+        assert!(
+            carries_image(&params),
+            "an image-declaring model receives the image block: {params:?}"
+        );
+        let params = request(&claude());
+        assert!(
+            !carries_image(&params),
+            "a text-only model never receives an image block: {params:?}"
+        );
+        assert!(
+            params
+                .iter()
+                .any(|message| message["content"].to_string().contains("image omitted")),
+            "the downgrade surfaces as the placeholder text: {params:?}"
+        );
+    }
 }
