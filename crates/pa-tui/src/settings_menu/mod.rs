@@ -555,13 +555,19 @@ impl SettingsMenu {
         };
         let row = &mut self.rows[row_index];
         if let Some(kind) = row.submenu.clone() {
-            // The tier submenu preselects the row's current tier.
+            // The tier and theme submenus preselect the row's current value; the row shows the
+            // resolved default (a light terminal's `light`), so opening on index 0 would flip the
+            // palette on the next Enter.
             let selected = match &kind {
                 SettingsSubmenu::ServiceTier => SERVICE_TIER_CHOICES
                     .iter()
                     .position(|tier| *tier == row.current)
                     .unwrap_or(0),
-                _ => 0,
+                SettingsSubmenu::Theme { themes } => themes
+                    .iter()
+                    .position(|name| *name == row.current)
+                    .unwrap_or(0),
+                SettingsSubmenu::Thinking { .. } | SettingsSubmenu::Warnings => 0,
             };
             self.sub = Some(SubmenuState {
                 row: row_index,

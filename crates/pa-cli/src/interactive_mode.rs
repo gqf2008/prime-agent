@@ -506,7 +506,10 @@ fn build_tui_options(
         initial_message: options.initial_message.clone(),
         show_images,
         fullscreen_mouse,
-        theme: settings.get_theme().map(str::to_string).unwrap_or_default(),
+        // An unset theme follows the terminal background: a light terminal
+        // gets the light palette (a dark editor surface and user-message echo
+        // would read as dark bands on a light page).
+        theme: settings.theme_name(),
         // The client-settings seam the interactive commands persist
         // through (`/settings`).
         client_settings: Some(crate::client_settings::CliClientSettings::new(

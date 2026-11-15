@@ -696,6 +696,14 @@ impl SettingsManager {
         self.merged.theme.as_deref()
     }
 
+    /// The theme a surface should render: the configured one, else the
+    /// terminal-background default (`settings::default_theme_name`).
+    #[must_use]
+    pub fn theme_name(&self) -> String {
+        self.get_theme()
+            .map_or_else(super::default_theme_name, str::to_string)
+    }
+
     /// Global-only read of the two known values; anything else is unset.
     #[must_use]
     pub fn get_update_channel(&self) -> Option<UpdateChannel> {
@@ -1236,6 +1244,16 @@ mod tests {
         let manager = SettingsManager::from_storage(storage);
         assert_eq!(manager.get_steering_mode(), QueueModeSetting::All);
         assert!(manager.get_telemetry_enabled());
+    }
+
+    #[test]
+    fn an_unset_theme_resolves_to_the_terminal_background_default() {
+        let manager = SettingsManager::in_memory(&Settings::default());
+        assert_eq!(manager.theme_name(), super::super::default_theme_name());
+        let mut named = Settings::default();
+        named.theme = Some("dark".to_string());
+        let manager = SettingsManager::in_memory(&named);
+        assert_eq!(manager.theme_name(), "dark", "a configured theme wins");
     }
 
     #[test]

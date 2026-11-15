@@ -1,0 +1,1 @@
+- The terminal's background now decides the default theme: a light terminal gets the light palette (the editor surface and your echoed messages are light instead of dark bands on a light page), a dark one keeps Prime. `/settings` shows the theme actually in use, and the Theme submenu opens on it.

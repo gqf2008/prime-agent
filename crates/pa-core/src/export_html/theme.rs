@@ -211,28 +211,6 @@ fn parse_theme_json(raw: &str) -> Result<ExportThemeJson> {
     })
 }
 
-/// The default theme when settings carry none: a light terminal background
-/// (`COLORFGBG`) selects the light theme, everything else gets Prime.
-pub(crate) fn default_theme_name() -> String {
-    if detect_light_terminal_background(std::env::var("COLORFGBG").ok().as_deref()) {
-        "light".to_string()
-    } else {
-        "prime".to_string()
-    }
-}
-
-/// `COLORFGBG` detection: the background palette slot is 8+ for light
-/// terminals.
-fn detect_light_terminal_background(value: Option<&str>) -> bool {
-    let Some(value) = value else { return false };
-    let mut parts = value.split(';');
-    parts.next();
-    match parts.next().and_then(|bg| bg.parse::<u64>().ok()) {
-        Some(bg) => bg >= 8,
-        None => false,
-    }
-}
-
 /// `parseColor`: `#RRGGBB` or `rgb(r, g, b)` to RGB, else `None`.
 fn parse_color(color: &str) -> Option<(u8, u8, u8)> {
     if let Some(hex) = color.strip_prefix('#') {
@@ -311,7 +289,7 @@ pub(crate) fn resolve_export_theme(
     theme_name: Option<&str>,
     agent_dir: &Path,
 ) -> Result<ExportTheme> {
-    let name = theme_name.map_or_else(default_theme_name, str::to_string);
+    let name = theme_name.map_or_else(crate::settings::default_theme_name, str::to_string);
     let theme = load_theme_json(&name, agent_dir)?;
     let light = theme.name == "light";
 
@@ -416,15 +394,6 @@ mod tests {
 
         let error = resolve_export_theme(Some("missing"), dir.path()).expect_err("unknown theme");
         assert_eq!(error.to_string(), "Theme not found: missing");
-    }
-
-    #[test]
-    fn default_theme_detection() {
-        assert!(!detect_light_terminal_background(Some("15;0")));
-        assert!(detect_light_terminal_background(Some("0;15")));
-        assert!(!detect_light_terminal_background(Some("15;7")));
-        assert!(!detect_light_terminal_background(None));
-        assert!(!detect_light_terminal_background(Some("bogus")));
     }
 
     #[test]

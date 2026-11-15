@@ -179,6 +179,27 @@ fn theme_submenu_previews_and_esc_restores() {
 }
 
 #[test]
+fn enter_opens_the_theme_submenu_on_the_current_theme() {
+    let values = SettingsCurrentValues {
+        available_themes: vec!["prime".to_string(), "dark".to_string(), "light".to_string()],
+        // An unset setting resolves to the terminal-background default (light here): the
+        // submenu must open on the palette the row shows, not on index 0.
+        theme: "light".to_string(),
+        ..Default::default()
+    };
+    let mut menu = SettingsMenu::new(settings_menu_rows(&values));
+    menu.handle_key("3", &kb());
+    assert_eq!(menu.handle_key("enter", &kb()), SettingsMenuAction::None);
+    assert_eq!(
+        menu.handle_key("enter", &kb()),
+        SettingsMenuAction::Change {
+            id: "theme",
+            value: "light".to_string()
+        }
+    );
+}
+
+#[test]
 fn enter_opens_the_service_tier_submenu_preselected_and_selection_applies() {
     let values = SettingsCurrentValues {
         default_service_tier: "flex".to_string(),

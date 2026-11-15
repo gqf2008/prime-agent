@@ -39,8 +39,10 @@ impl Default for AppOptions {
 #[must_use]
 pub fn load_theme(name: &str) -> Theme {
     let mode = crate::theme::detect_color_mode();
-    // The default brand theme when the caller passes none (empty) or an
-    // unknown name; only known builtins resolve.
+    // The brand theme when the caller passes none (empty) or an unknown name;
+    // only known builtins resolve. The composition root resolves the
+    // terminal-background default (`SettingsManager::theme_name`) before it
+    // gets here, so a light terminal never lands on the dark surface.
     let known = ["prime", "dark", "light"];
     let name = if known.contains(&name) { name } else { "prime" };
     Theme::builtin(name, mode)

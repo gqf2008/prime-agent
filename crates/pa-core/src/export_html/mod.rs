@@ -233,7 +233,16 @@ mod tests {
         assert_eq!(returned, out.to_string_lossy());
         let html = std::fs::read_to_string(&out).expect("read export");
         assert!(html.contains("Session Export"));
-        assert!(html.contains("--accent: #7c6faf;"));
+        // The default theme follows the terminal background (light terminals get the light
+        // palette), so the assertion tracks the rule instead of the ambient env.
+        let accent = match crate::settings::default_theme_name().as_str() {
+            "light" => "#5a8080",
+            _ => "#7c6faf",
+        };
+        assert!(
+            html.contains(&format!("--accent: {accent};")),
+            "the default theme's accent reaches the export"
+        );
         assert!(html.contains("marked.min.js") || html.contains("marked"));
         let start = html
             .find("session-data\" type=\"application/json\">")
