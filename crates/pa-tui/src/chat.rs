@@ -6,7 +6,7 @@ mod geometry;
 pub(crate) use geometry::{assistant_row_count, user_block_row_count};
 
 use crate::snapshot::RetryStartReason;
-use crate::theme::{Theme, ThemeBg, ThemeColor};
+use crate::theme::{Theme, ThemeColor};
 use crate::width::str_width;
 use crate::{Line, Span};
 use ratatui::style::{Modifier, Style};
@@ -301,9 +301,12 @@ pub fn render_text_rows(text: &str, style: Style, width: usize) -> Vec<Line> {
     out
 }
 
-/// The user-message block (TS `UserMessageComponent`: Box(2,1) on `userMessageBg`,
-/// markdown inside colored `userMessageText`). Prompt-highlight tokens render
-/// in their own colors (TS masks them to same-width placeholders so markdown cannot eat them).
+/// The user-message block. TS `UserMessageComponent` paints a `userMessageBg` box; this port
+/// paints NO background and no body colour — the terminal's own canvas and foreground are
+/// the pair, and the `> ` lead marks the user's turn (the operator's 2026-11-15 ruling that
+/// an agent TUI follows the terminal's colour scheme; a fixed surface hex is unreadable
+/// whenever the terminal disagrees with it). Prompt-highlight tokens keep their own colours
+/// (TS masks them to same-width placeholders so markdown cannot eat them).
 #[must_use]
 pub fn render_user_block(
     text: &str,
@@ -323,30 +326,35 @@ pub(crate) fn render_user_block_with_style(
     md: &crate::markdown::MarkdownStyle,
     width: usize,
 ) -> Vec<Line> {
-    let bg = theme.bg_style(ThemeBg::UserMessageBg);
+    // The echo paints NO background and sets NO foreground: the terminal's canvas and
+    // foreground are the surface, so the block stays legible under any terminal scheme
+    // (the operator's 2026-11-15 ruling; TS renders this block on `userMessageBg`, a
+    // sanctioned divergence). The `> ` lead is what marks the user's turn — the prompt
+    // carries the same marker — and the assistant's reply stays unprefixed.
+    let plain = Style::default();
     let content_width = width.saturating_sub(4).max(1);
-    let body = theme.fg_style(ThemeColor::UserMessageText);
+    let body = Style::default();
     let mask = geometry::user_mask(text);
     let rendered = crate::markdown::render_markdown(&mask.text, content_width, md);
     let mut rows: Vec<Line> = Vec::new();
-    let blank = vec![Span::styled(" ".repeat(width), bg)];
-    rows.push(blank.clone());
+    rows.push(Vec::new());
     if rendered.is_empty() {
-        let row = vec![
-            Span::styled("  ".to_string(), bg),
-            Span::styled(String::new(), body),
-        ];
-        rows.push(pad_to(row, width, bg));
+        rows.push(pad_to(
+            vec![Span::styled("> ".to_string(), body)],
+            width,
+            plain,
+        ));
     }
-    for line in rendered {
-        let mut row: Line = vec![Span::styled("  ".to_string(), bg)];
+    for (index, line) in rendered.into_iter().enumerate() {
+        let lead = if index == 0 { "> " } else { "  " };
+        let mut row: Line = vec![Span::styled(lead.to_string(), plain)];
         // The user block colors everything `userMessageText` on the block background;
         // markdown structure (wrapping) is kept, its own colors are not, and the link
         // affordance survives the restyle.
         let restyled: Line = line
             .into_iter()
             .map(|span| {
-                let mut style = bg.patch(body);
+                let mut style = body;
                 if span.style.add_modifier.contains(Modifier::UNDERLINED) {
                     style = style.add_modifier(Modifier::UNDERLINED);
                 }
@@ -357,9 +365,9 @@ pub(crate) fn render_user_block_with_style(
             })
             .collect();
         row.extend(mask.restore_line(theme, &restyled));
-        rows.push(pad_to(row, width, bg));
+        rows.push(pad_to(row, width, plain));
     }
-    rows.push(blank);
+    rows.push(Vec::new());
     // Zone markers: `A` on the first block row, `B`/`C` on the last (TS
     // `UserMessageComponent.render`).
     if let Some(first) = rows.first_mut() {

@@ -16,7 +16,7 @@ use crate::theme::{Theme, ThemeBg, ThemeColor};
 use crate::width::{str_width, truncate_to_width};
 use crate::{Line, Span};
 use pa_types::slash_commands::SlashCommandRegistry;
-use ratatui::style::Modifier;
+use ratatui::style::{Modifier, Style};
 
 pub(crate) struct EditorBox {
     /// The box's rows, top bg row first.
@@ -44,11 +44,12 @@ pub(crate) fn render(
     header: Option<Line>,
     placeholder: Option<&str>,
 ) -> EditorBox {
-    let bg = crate::chrome::editor_background(theme);
-    // The editor paints its own surface, so its text must not inherit the terminal's
-    // foreground: a light palette on a dark terminal (or the reverse) would otherwise
-    // render the draft in the surface's own colour.
-    let text_style = bg.patch(theme.fg_style(ThemeColor::UserMessageText));
+    // The prompt paints NO background: the terminal's own canvas is the surface, and the
+    // terminal's own foreground is the text colour, so the two are always a matched pair
+    // (the operator's 2026-11-15 ruling: an agent TUI follows the terminal's colour
+    // scheme). The `> ` prompt is what marks the input; emphasis uses REVERSED for the
+    // cursor, never a colour block.
+    let bg = Style::default();
     let border = theme.fg_style(ThemeColor::BorderMuted);
     let padding_x = 2usize;
     let content_width = width.saturating_sub(padding_x * 2).max(1);
@@ -153,7 +154,7 @@ pub(crate) fn render(
             &highlights,
             chunk_selection(selection, line.source_line, line.source_start, text),
             cursor_pos,
-            text_style,
+            bg,
         ));
         let mut used = str_width(text);
         if cursor_pos == Some(text.chars().count()) {

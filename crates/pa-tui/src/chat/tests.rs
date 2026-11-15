@@ -121,23 +121,22 @@ fn user_block_renders_box_rows() {
         .iter()
         .map(|s| s.content.as_str())
         .collect::<String>();
-    assert_eq!(text.trim(), "Run a quick check.");
+    assert_eq!(text.trim(), "> Run a quick check.");
     assert_eq!(text.len(), 60);
 }
 
-/// The user block's styling tiers: the row background, the
-/// `userMessageText` body, and the prompt-highlight token colors.
+/// The user block's styling tiers: the block paints NO background and sets no body
+/// colour (the terminal's canvas and foreground are the pair), and the
+/// prompt-highlight token colours stand alone.
 fn user_block_styles() -> (Style, Style, Style, Style, Style) {
     let theme = theme();
-    let bg = theme.bg_style(ThemeBg::UserMessageBg);
-    let body = theme.fg_style(ThemeColor::UserMessageText);
-    let on_bg = |fg: Style| bg.patch(fg);
+    let plain = Style::default();
     (
-        bg,
-        on_bg(body),
-        on_bg(theme.fg_style(ThemeColor::Accent)),
-        on_bg(theme.fg_style(ThemeColor::Success)),
-        on_bg(theme.fg_style(ThemeColor::MdLink)),
+        plain,
+        plain,
+        theme.fg_style(ThemeColor::Accent),
+        theme.fg_style(ThemeColor::Success),
+        theme.fg_style(ThemeColor::MdLink),
     )
 }
 
@@ -168,8 +167,7 @@ fn user_block_keeps_the_link_affordance() {
     assert_eq!(
         row_runs(&rows[1]),
         vec![
-            ("  ".to_string(), bg),
-            ("see ".to_string(), body),
+            ("> see ".to_string(), bg),
             (
                 format!(
                     "{}docs{}",
@@ -195,13 +193,11 @@ fn user_block_highlights_argument_tokens() {
     assert_eq!(
         row_runs(&rows[1]),
         vec![
-            ("  ".to_string(), bg),
-            ("fix ".to_string(), body),
+            ("> fix ".to_string(), bg),
             ("@Cargo.toml".to_string(), success),
             (" ".to_string(), body),
             ("--quiet".to_string(), md_link),
-            (" now".to_string(), body),
-            (" ".repeat(60 - 2 - 27), bg),
+            (format!(" now{}", " ".repeat(60 - 29)), body),
         ]
     );
 }
@@ -216,7 +212,7 @@ fn user_block_accents_a_recognized_leading_command() {
     assert_eq!(
         row_runs(&rows[1]),
         vec![
-            ("  ".to_string(), bg),
+            ("> ".to_string(), bg),
             ("/hotkeys".to_string(), accent),
             (" ".repeat(40 - 2 - 8), bg),
         ]
@@ -229,7 +225,7 @@ fn user_block_accents_a_recognized_leading_command() {
             .map(|(t, _)| t.as_str())
             .collect::<String>()
             .trim(),
-        "/definitely-not-builtin now"
+        "> /definitely-not-builtin now"
     );
     assert!(
         styled
@@ -305,8 +301,8 @@ fn user_block_carries_zone_markers() {
     assert!(first.starts_with(crate::osc133::ZONE_START));
     let last: String = rows[2].iter().map(|s| s.content.as_str()).collect();
     assert!(last.starts_with(crate::osc133::ZONE_END_PREFIX));
-    // Markers are zero-width: marked rows still measure full width.
-    assert_eq!(crate::width::line_width(&rows[0]), 60);
+    // Markers are zero-width, and the spacer row paints nothing to measure.
+    assert_eq!(crate::width::line_width(&rows[0]), 0);
 }
 
 #[test]

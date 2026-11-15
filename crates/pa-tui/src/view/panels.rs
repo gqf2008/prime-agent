@@ -101,8 +101,7 @@ impl AgentView {
                     follow_up: display("app.message.followUp"),
                 }
             };
-            let dim = crate::chrome::editor_background(&self.theme)
-                .patch(self.theme.fg_style(ThemeColor::Dim));
+            let dim = self.theme.fg_style(ThemeColor::Dim);
             vec![Span::styled(
                 crate::queued::browse_header_text(selected, &keys),
                 dim,

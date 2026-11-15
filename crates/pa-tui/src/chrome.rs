@@ -6,7 +6,7 @@ use crate::{Line, Span};
 use ratatui::style::Style;
 use serde_json::Value;
 
-use crate::theme::{Theme, ThemeBg, ThemeColor};
+use crate::theme::{Theme, ThemeColor};
 
 /// The compact 7-row brand butterfly.
 pub const PRIME_COMPACT_BUTTERFLY_LOGO: &str = concat!(
@@ -1039,12 +1039,6 @@ pub fn render_speed_footer(text: &str, theme: &Theme, width: usize) -> Line {
     let dim = theme.fg_style(ThemeColor::Dim);
     let text = truncate_to_width(text, width, "");
     vec![Span::styled(text, dim)]
-}
-
-/// The editor surface background: `userMessageBg` (TS `getEditorTheme`).
-#[must_use]
-pub fn editor_background(theme: &Theme) -> ratatui::style::Style {
-    theme.bg_style(ThemeBg::UserMessageBg)
 }
 #[cfg(test)]
 mod tests;

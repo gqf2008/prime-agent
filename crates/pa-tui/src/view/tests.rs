@@ -1732,3 +1732,29 @@ fn settled_rows_survive_a_cache_roundtrip() {
         "a fresh view renders the same rows (the Took clock may move)"
     );
 }
+
+/// The prompt and the user's echoed turn paint NO background: the terminal's own canvas
+/// shows through, and its own foreground is the text colour, so the pair always matches
+/// (the operator's 2026-11-15 ruling: an agent TUI follows the terminal's colour scheme).
+/// Re-introducing a surface colour here makes this red — and with it the mismatched-terminal
+/// bug returns, because `userMessageBg` is a fixed hex in every bundled theme.
+#[test]
+fn the_input_area_and_the_user_echo_paint_no_background() {
+    for name in ["prime", "dark", "light"] {
+        let theme = Theme::builtin(name, ColorMode::TrueColor);
+        let mut editor = crate::editor::Editor::new();
+        editor.set_text("draft text");
+        let surface =
+            crate::view::editor_surface::render(&mut editor, &theme, 80, 30, None, Some("Ask"));
+        let echo = crate::chat::render_user_block("my turn", &theme, "  ", 80);
+        for row in surface.rows.iter().chain(echo.iter()) {
+            for span in row {
+                assert!(
+                    span.style.bg.is_none(),
+                    "{name}: a painted background reached the prompt/echo: {:?} in {row:?}",
+                    span.content
+                );
+            }
+        }
+    }
+}
