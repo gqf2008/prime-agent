@@ -2,7 +2,6 @@
 //! never steers (a steer interrupts the very tool call waiting for it).
 use super::*;
 use crate::agent_engine::mcp_elicitation::{AnswerField, ElicitationDecision, FieldKind};
-use crate::engine::SessionEngine as _;
 use serde_json::json;
 
 fn real_worker(dir: &std::path::Path) -> Arc<Worker> {
@@ -27,8 +26,8 @@ fn real_worker(dir: &std::path::Path) -> Arc<Worker> {
 ///
 /// The tooth: remove the `handle_prompt` interception and this test fails — the
 /// prompt lands in the steering lane and the pending request stays unanswered
-/// (`try_recv` finds no decision). That steer is what killed the tool call in
-/// the ConPTY run this regression came from.
+/// (`try_recv` finds no decision). That `steer` is what killed the tool call in
+/// the `ConPTY` run this regression came from.
 #[tokio::test]
 async fn an_elicit_prompt_answers_without_entering_a_lane() {
     let dir = std::env::temp_dir().join(format!("pa-worker-elicit-{}", uuid::Uuid::new_v4()));

@@ -15,9 +15,9 @@
 //! The answer never enters a queue lane: the worker applies `/elicit` in
 //! `handle_prompt` ahead of admission (`worker/input.rs`), because a steering
 //! delivery would interrupt the very tool call that is waiting for the answer
-//! (the ConPTY run of 2026-11-17 showed the kernel cell dying with a
-//! KeyboardInterrupt when the answer rode the steering lane). `run_prompt` keeps
-//! a fallback interception for prompts that arrive by another path.
+//! (the `ConPTY` run of 2026-11-17 showed the kernel cell dying with a
+//! `KeyboardInterrupt` when the answer rode the steering lane). `run_prompt`
+//! keeps a fallback interception for prompts that arrive by another path.
 //!
 //! Rollback: nothing here changes the wire (no new command, no session event, no
 //! schema bump) — the request and answer are an ordinary custom row plus a
