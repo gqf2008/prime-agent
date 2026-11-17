@@ -107,12 +107,16 @@ clean checkout of the base branch in a scratch worktree, run the same command, a
 the sorted failure lists:
 
 ```powershell
-git worktree add E:/UserTemp/pa-baseline-main main
+$worktree = Join-Path $env:TEMP 'pa-baseline-main'
+$scratch = Join-Path $env:TEMP 'pa-baseline-lists'
+New-Item -ItemType Directory -Force $scratch | Out-Null
+git worktree add $worktree main
 $env:CARGO_TARGET_DIR = (Resolve-Path .).Path + "/target"   # reuse the dependency builds
-cargo test -p pa-daemon --lib 2>&1 | Select-String '^    \w.*::' | % { $_.Line.Trim() } | Sort-Object > E:/UserTemp/main.txt
-cd E:/UserTemp/pa-baseline-main
-cargo test -p pa-daemon --lib 2>&1 | Select-String '^    \w.*::' | % { $_.Line.Trim() } | Sort-Object > E:/UserTemp/branch.txt
-diff (Get-Content E:/UserTemp/main.txt) (Get-Content E:/UserTemp/branch.txt)
+cargo test -p pa-daemon --lib 2>&1 | Select-String '^    \w.*::' | % { $_.Line.Trim() } | Sort-Object > "$scratch/branch.txt"
+Push-Location $worktree
+cargo test -p pa-daemon --lib 2>&1 | Select-String '^    \w.*::' | % { $_.Line.Trim() } | Sort-Object > "$scratch/main.txt"
+Pop-Location
+diff (Get-Content "$scratch/main.txt") (Get-Content "$scratch/branch.txt")
 ```
 
 An empty diff means the branch added no failures; every line in the diff is a failure the
