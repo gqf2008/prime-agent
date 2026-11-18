@@ -10,16 +10,23 @@
 pub struct ModelAllowlistRefusal {
     /// The refused model, full selector form `provider/model-id`.
     pub selector: String,
+    /// The configured patterns, so the message says what would have allowed it.
+    pub allowed: Vec<String>,
 }
 
 impl std::fmt::Display for ModelAllowlistRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut shown = self.allowed.iter().take(8).cloned().collect::<Vec<_>>();
+        if self.allowed.len() > 8 {
+            shown.push("...".to_string());
+        }
         write!(
             f,
-            "Model \"{}\" is blocked by the daemon model allowlist (settings \"allowedModels\"); \
+            "Model \"{}\" is blocked by the daemon model allowlist (settings \"allowedModels\": [{}]); \
              the daemon never falls back to a different model. Allow it in the settings \
              or pick an allowed model.",
-            self.selector
+            self.selector,
+            shown.join(", ")
         )
     }
 }
@@ -113,6 +120,7 @@ mod tests {
     fn the_refusal_error_carries_the_selector() {
         let refusal = ModelAllowlistRefusal {
             selector: "zai/glm-5.3".to_string(),
+            allowed: vec!["anthropic/*".to_string()],
         };
         assert_eq!(refusal.selector, "zai/glm-5.3");
         let message = refusal.to_string();
@@ -121,5 +129,9 @@ mod tests {
             "{message}"
         );
         assert!(message.contains("never falls back"), "{message}");
+        assert!(
+            message.contains("allowedModels\": [anthropic/*]"),
+            "the message names what would have allowed it: {message}"
+        );
     }
 }

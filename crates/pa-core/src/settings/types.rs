@@ -313,6 +313,10 @@ pub struct Settings {
     pub onboarding_completed: Option<bool>,
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
+    /// The model a model-less `rlm.spawn` / `rlm.create_session` resolves to
+    /// (`provider/model` or a unique short form). A value that does not
+    /// resolve fails the spawn — it never falls back to the parent model,
+    /// which would silently run something else. Unset inherits the parent.
     pub subagent_default_model: Option<String>,
     pub update_channel: Option<UpdateChannel>,
     pub recent_models: Option<Vec<String>>,

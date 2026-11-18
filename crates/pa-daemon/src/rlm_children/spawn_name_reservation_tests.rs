@@ -154,6 +154,158 @@ async fn sessions_with_gated_supervisor(
     sessions
 }
 
+/// Like [`sessions_with_gated_supervisor`], but rooted in a test-owned
+/// directory so settings and a catalog can exist for the child-model resolver.
+async fn sessions_with_gated_supervisor_in(
+    base: &std::path::Path,
+    model: Option<&str>,
+    create_seen_tx: mpsc::UnboundedSender<Value>,
+    verdict_rx: mpsc::UnboundedReceiver<bool>,
+    rename_seen_tx: mpsc::UnboundedSender<Value>,
+) -> SupervisorChildSessions {
+    let socket = base.join("supervisor.sock");
+    spawn_gated_supervisor(
+        socket.clone(),
+        create_seen_tx,
+        verdict_rx,
+        rename_seen_tx,
+        None,
+    )
+    .await;
+    let link = Arc::new(crate::supervisor_link::SupervisorLink::new(socket));
+    let agent_dir = base.join("agent");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    let sessions = SupervisorChildSessions::new(
+        link,
+        agent_dir,
+        "parent-live".to_string(),
+        std::sync::Arc::new(crate::model_allowlist::ModelRefusalTelemetry::new(
+            std::env::temp_dir(),
+            /*telemetry_disabled*/ true,
+        )),
+        String::new(),
+    );
+    sessions.set_identity(ParentIdentity {
+        model: model.map(str::to_string),
+        cwd: Some(base.to_string_lossy().to_string()),
+        ..ParentIdentity::with_default_depth()
+    });
+    sessions
+}
+
+fn write_child_catalog(base: &std::path::Path) {
+    std::fs::create_dir_all(base.join("agent")).unwrap();
+    std::fs::write(
+        base.join("agent").join("models.json"),
+        json!({
+            "providers": { "mock": {
+                "baseUrl": "http://localhost:9", "apiKey": "test-key", "api": "openai-completions",
+                "models": [
+                    { "id": "mock-1", "contextWindow": 1000, "maxTokens": 100 },
+                    { "id": "mock-2", "contextWindow": 1000, "maxTokens": 100 }
+                ]
+            } }
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
+/// A model-less spawn takes `settings.subagentDefaultModel`, and the create
+/// the supervisor receives carries it: that is what the child's `model_change`
+/// records.
+#[tokio::test]
+async fn a_model_less_spawn_uses_the_configured_subagent_default() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_child_catalog(dir.path());
+    std::fs::write(
+        dir.path().join("agent").join("settings.json"),
+        json!({ "subagentDefaultModel": "mock/mock-2" }).to_string(),
+    )
+    .unwrap();
+    let (create_seen_tx, mut create_seen_rx) = mpsc::unbounded_channel();
+    let (verdict_tx, verdict_rx) = mpsc::unbounded_channel();
+    let (rename_seen_tx, _rename_seen_rx) = mpsc::unbounded_channel();
+    let sessions = sessions_with_gated_supervisor_in(
+        dir.path(),
+        Some("mock/mock-1"),
+        create_seen_tx,
+        verdict_rx,
+        rename_seen_tx,
+    )
+    .await;
+    let spawned = tokio::spawn(sessions.spawn(spawn_request("pinned", "go")));
+    let command = create_seen_rx.recv().await.expect("the create arrives");
+    // Never print the whole command: its launchEnv carries the parent's
+    // environment. Only the model fields are this test's concern.
+    assert_eq!(
+        command["config"]["provider"],
+        json!("mock"),
+        "the configured default pins the child"
+    );
+    assert_eq!(command["config"]["model"], json!("mock-2"));
+    verdict_tx.send(true).expect("admit the create");
+    let _ = spawned.await.expect("spawn task").expect("admission");
+}
+
+/// Without a configured default the child inherits the parent session's model.
+#[tokio::test]
+async fn a_model_less_spawn_inherits_the_parent_model() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_child_catalog(dir.path());
+    let (create_seen_tx, mut create_seen_rx) = mpsc::unbounded_channel();
+    let (verdict_tx, verdict_rx) = mpsc::unbounded_channel();
+    let (rename_seen_tx, _rename_seen_rx) = mpsc::unbounded_channel();
+    let sessions = sessions_with_gated_supervisor_in(
+        dir.path(),
+        Some("mock/mock-1"),
+        create_seen_tx,
+        verdict_rx,
+        rename_seen_tx,
+    )
+    .await;
+    let spawned = tokio::spawn(sessions.spawn(spawn_request("inherits", "go")));
+    let command = create_seen_rx.recv().await.expect("the create arrives");
+    assert_eq!(
+        command["config"]["provider"],
+        json!("mock"),
+        "an unconfigured child inherits the parent"
+    );
+    assert_eq!(command["config"]["model"], json!("mock-1"));
+    verdict_tx.send(true).expect("admit the create");
+    let _ = spawned.await.expect("spawn task").expect("admission");
+}
+
+/// The engine's live serving model beats a stale identity snapshot: a
+/// `/model` switch changes what a model-less spawn inherits.
+#[tokio::test]
+async fn a_live_model_probe_overrides_the_identity_snapshot() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_child_catalog(dir.path());
+    let (create_seen_tx, mut create_seen_rx) = mpsc::unbounded_channel();
+    let (verdict_tx, verdict_rx) = mpsc::unbounded_channel();
+    let (rename_seen_tx, _rename_seen_rx) = mpsc::unbounded_channel();
+    let sessions = sessions_with_gated_supervisor_in(
+        dir.path(),
+        Some("mock/mock-1"),
+        create_seen_tx,
+        verdict_rx,
+        rename_seen_tx,
+    )
+    .await;
+    sessions.set_live_model_probe(std::sync::Arc::new(|| Some("mock/mock-2".to_string())));
+    let spawned = tokio::spawn(sessions.spawn(spawn_request("live", "go")));
+    let command = create_seen_rx.recv().await.expect("the create arrives");
+    assert_eq!(command["config"]["provider"], json!("mock"));
+    assert_eq!(
+        command["config"]["model"],
+        json!("mock-2"),
+        "the live probe wins over the identity snapshot"
+    );
+    verdict_tx.send(true).expect("admit the create");
+    let _ = spawned.await.expect("spawn task").expect("admission");
+}
+
 fn spawn_request(name: &str, prompt: &str) -> RlmSpawnRequest {
     RlmSpawnRequest {
         prompt: prompt.to_string(),

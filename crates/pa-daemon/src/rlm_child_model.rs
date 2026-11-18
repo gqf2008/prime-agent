@@ -53,32 +53,61 @@ pub fn resolve_child_model(
     agent_dir: &Path,
     reference: Option<&str>,
     parent_model: Option<&str>,
+    subagent_default_model: Option<&str>,
     target: &str,
     allowlist: &crate::model_allowlist::DaemonAllowlist,
 ) -> Result<String> {
-    let model = resolve_child_model_unchecked(agent_dir, reference, parent_model, target)?;
+    let model = resolve_child_model_unchecked(
+        agent_dir,
+        reference,
+        parent_model,
+        subagent_default_model,
+        target,
+    )?;
     crate::model_allowlist::assert_allowed(allowlist, &model)?;
     Ok(model)
 }
 
-/// The resolution before the allowlist gate: `None` inherits the parent model; a reference resolves
-/// parent equality first, then an exact catalog selector, then a unique short-form match.
+/// The resolution before the allowlist gate: with no reference the configured
+/// `settings.subagentDefaultModel` wins when set — it must resolve, a broken
+/// value fails loudly instead of silently falling back — and otherwise the
+/// parent model is inherited; a reference resolves parent equality first, then
+/// an exact catalog selector, then a unique short-form match.
 /// Public for the daemonless print host: print sessions do not enforce
 /// `allowedModels`, so its children do not either.
 ///
 /// # Errors
-/// Returns an error when the reference cannot be resolved against the catalog.
+/// Returns an error when the reference (or the configured default) cannot be
+/// resolved against the catalog, or when no model is selected at all.
 pub fn resolve_child_model_unchecked(
     agent_dir: &Path,
     reference: Option<&str>,
     parent_model: Option<&str>,
+    subagent_default_model: Option<&str>,
     target: &str,
 ) -> Result<String> {
     let Some(reference) = reference else {
+        let configured = subagent_default_model
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if let Some(configured) = configured {
+            return resolve_reference(agent_dir, configured, parent_model, target).map_err(
+                |error| anyhow!("subagentDefaultModel \"{configured}\" did not resolve: {error:#}"),
+            );
+        }
         return parent_model
             .map(str::to_string)
             .ok_or_else(|| anyhow!("No model selected. Use /model to pick one."));
     };
+    resolve_reference(agent_dir, reference, parent_model, target)
+}
+
+fn resolve_reference(
+    agent_dir: &Path,
+    reference: &str,
+    parent_model: Option<&str>,
+    target: &str,
+) -> Result<String> {
     let reference = reference.trim();
     let normalized = reference.to_lowercase();
     if let Some(parent) = parent_model {
@@ -271,6 +300,7 @@ mod tests {
             dir.path(),
             None,
             Some("test-provider/glm-5.3"),
+            None,
             "subagent",
             &DaemonAllowlist::Unrestricted,
         )
@@ -281,6 +311,7 @@ mod tests {
             dir.path(),
             Some("Test-Provider/GLM-5.3"),
             Some("test-provider/glm-5.3"),
+            None,
             "subagent",
             &DaemonAllowlist::Unrestricted,
         )
@@ -290,6 +321,7 @@ mod tests {
             dir.path(),
             Some("test-provider/glm-5.3-turbo"),
             Some("test-provider/glm-5.3"),
+            None,
             "subagent",
             &DaemonAllowlist::Unrestricted,
         )
@@ -299,6 +331,7 @@ mod tests {
             dir.path(),
             Some("glm-5.3-turbo"),
             Some("test-provider/glm-5.3"),
+            None,
             "subagent",
             &DaemonAllowlist::Unrestricted,
         )
@@ -306,6 +339,7 @@ mod tests {
         assert_eq!(resolved, "test-provider/glm-5.3-turbo");
         let error = resolve_child_model(
             dir.path(),
+            None,
             None,
             None,
             "subagent",
@@ -329,6 +363,7 @@ mod tests {
             dir.path(),
             Some("test-provider/glm-5.3"),
             None,
+            None,
             "subagent",
             &allow,
         )
@@ -349,6 +384,7 @@ mod tests {
             dir.path(),
             None,
             Some("test-provider/glm-5.3"),
+            None,
             "subagent",
             &allow,
         )
@@ -363,6 +399,7 @@ mod tests {
             dir.path(),
             Some("test-provider/glm-5.3"),
             None,
+            None,
             "subagent",
             &crate::model_allowlist::DaemonAllowlist::Allowed(vec!["test-provider/*".to_string()]),
         )
@@ -371,6 +408,7 @@ mod tests {
         let resolved = resolve_child_model(
             dir.path(),
             Some("test-provider/glm-5.3"),
+            None,
             None,
             "subagent",
             &DaemonAllowlist::Unrestricted,
@@ -390,6 +428,7 @@ mod tests {
             dir.path(),
             Some("test-provi"),
             Some("test-provider/glm-5.3"),
+            None,
             "subagent",
             &DaemonAllowlist::Unrestricted,
         )
@@ -410,6 +449,7 @@ mod tests {
             dir.path(),
             Some("zzz"),
             Some("test-provider/glm-5.3"),
+            None,
             "subagent",
             &DaemonAllowlist::Unrestricted,
         )
@@ -503,6 +543,7 @@ mod tests {
             dir.path(),
             Some("prime-inference/internal/glm-5.3-fast"),
             Some("prime-inference/z-ai/glm-5.3"),
+            None,
             "subagent",
             &DaemonAllowlist::Unrestricted,
         )
@@ -512,6 +553,7 @@ mod tests {
             dir.path(),
             Some("internal/glm-5.3-fast"),
             Some("prime-inference/z-ai/glm-5.3"),
+            None,
             "subagent",
             &DaemonAllowlist::Unrestricted,
         )
@@ -599,6 +641,7 @@ mod tests {
             dir.path(),
             Some(&selector),
             Some("prime-inference/z-ai/glm-5.3"),
+            None,
             "subagent",
             &DaemonAllowlist::Unrestricted,
         )
@@ -608,6 +651,7 @@ mod tests {
             dir.path(),
             Some(PROBE_ID),
             Some("prime-inference/z-ai/glm-5.3"),
+            None,
             "subagent",
             &DaemonAllowlist::Unrestricted,
         )
@@ -656,5 +700,98 @@ mod tests {
         );
         let lane = cap_text(&wide_json, ANSWER_TEXT_MAX_CHARS);
         assert_eq!(lane, wide_json, "a wide-but-bounded JSON keeps its tail");
+    }
+
+    /// A model-less spawn takes the configured `subagentDefaultModel`.
+    #[test]
+    fn a_configured_subagent_default_pins_the_child() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_catalog(dir.path());
+        let resolved = resolve_child_model(
+            dir.path(),
+            None,
+            Some("test-provider/glm-5.3"),
+            Some("test-provider/glm-5.3-turbo"),
+            "subagent",
+            &DaemonAllowlist::Unrestricted,
+        )
+        .unwrap();
+        assert_eq!(resolved, "test-provider/glm-5.3-turbo");
+        // A bare id in the setting resolves through the short-form match too.
+        let resolved = resolve_child_model(
+            dir.path(),
+            None,
+            Some("test-provider/glm-5.3"),
+            Some("glm-5.3-turbo"),
+            "subagent",
+            &DaemonAllowlist::Unrestricted,
+        )
+        .unwrap();
+        assert_eq!(resolved, "test-provider/glm-5.3-turbo");
+    }
+
+    /// Without a configured default, a model-less spawn inherits the parent.
+    #[test]
+    fn an_unconfigured_child_inherits_the_parent_model() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_catalog(dir.path());
+        let resolved = resolve_child_model(
+            dir.path(),
+            None,
+            Some("test-provider/glm-5.3"),
+            None,
+            "subagent",
+            &DaemonAllowlist::Unrestricted,
+        )
+        .unwrap();
+        assert_eq!(resolved, "test-provider/glm-5.3");
+    }
+
+    /// A configured default that cannot resolve fails loudly — it never falls
+    /// back to the parent model, which would silently run the wrong model.
+    #[test]
+    fn a_broken_subagent_default_fails_loudly() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_catalog(dir.path());
+        let error = resolve_child_model(
+            dir.path(),
+            None,
+            Some("test-provider/glm-5.3"),
+            Some("missing/no-such-model"),
+            "subagent",
+            &DaemonAllowlist::Unrestricted,
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("subagentDefaultModel \"missing/no-such-model\" did not resolve"),
+            "{error}"
+        );
+    }
+
+    /// The allowlist refusal names the refused selector and the patterns that
+    /// would have allowed it.
+    #[test]
+    fn the_refusal_names_the_selector_and_the_allowlist() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_catalog(dir.path());
+        let allow =
+            crate::model_allowlist::DaemonAllowlist::Allowed(vec!["prime-inference/*".to_string()]);
+        let error = resolve_child_model(
+            dir.path(),
+            Some("test-provider/glm-5.3"),
+            None,
+            None,
+            "subagent",
+            &allow,
+        )
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("test-provider/glm-5.3"), "{message}");
+        assert!(
+            message.contains("allowedModels\": [prime-inference/*]"),
+            "{message}"
+        );
     }
 }

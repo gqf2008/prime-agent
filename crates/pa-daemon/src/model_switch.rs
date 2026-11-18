@@ -322,7 +322,7 @@ mod tests {
         assert_eq!(response.command, "set_model");
         assert_eq!(
             response.error.as_deref(),
-            Some("Model \"prime-inference/mock-1\" is blocked by the daemon model allowlist (settings \"allowedModels\"); the daemon never falls back to a different model. Allow it in the settings or pick an allowed model.")
+            Some("Model \"prime-inference/mock-1\" is blocked by the daemon model allowlist (settings \"allowedModels\": [anthropic/*]); the daemon never falls back to a different model. Allow it in the settings or pick an allowed model.")
         );
 
         // An allowing allowlist opens the gate: the scripted engine then

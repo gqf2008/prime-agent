@@ -73,6 +73,7 @@ pub(crate) fn assert_allowed(allowlist: &DaemonAllowlist, selector: &str) -> Res
             } else {
                 Err(ModelAllowlistRefusal {
                     selector: selector.to_string(),
+                    allowed: patterns.clone(),
                 }
                 .into())
             }

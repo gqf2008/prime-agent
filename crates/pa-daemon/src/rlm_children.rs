@@ -90,6 +90,10 @@ const WATCH_MAX_UNREACHABLE_POLLS: u32 = 150;
 /// before retiring; an unpicked delivery attributes nothing.
 const FOLLOWUP_START_GRACE_MS: u64 = 30_000;
 const FOLLOWUP_START_POLL_MS: u64 = 2_000;
+/// What the parent is serving right now: the engine's live provider
+/// target, read at spawn time so a `/model` switch is visible immediately.
+pub type LiveModelProbe = std::sync::Arc<dyn Fn() -> Option<String> + Send + Sync>;
+
 #[derive(Debug, Clone, Default)]
 pub struct ParentIdentity {
     pub rlm_depth: u32,
@@ -358,6 +362,9 @@ struct SupervisorChildSessionsInner {
     /// `sessionName` of every spawn row's `from` endpoint): `None` until
     /// the worker publishes a summary, and refreshed by every rename.
     parent_session_name: std::sync::Mutex<Option<String>>,
+    /// The engine's live serving model (a model-less spawn prefers it to the
+    /// identity snapshot, so a `/model` switch is visible immediately).
+    live_model: std::sync::Mutex<Option<LiveModelProbe>>,
     // Std mutex: the identity lock is only a data swap, never held across
     // an await, so sync engine paths can set it without a runtime `block_on`.
     identity: std::sync::Mutex<ParentIdentity>,
@@ -434,6 +441,7 @@ impl SupervisorChildSessions {
                 worker_token,
                 observation_requests: std::sync::atomic::AtomicU64::new(0),
                 parent_session_name: std::sync::Mutex::new(None),
+                live_model: std::sync::Mutex::new(None),
                 identity: std::sync::Mutex::new(ParentIdentity::with_default_depth()),
                 children: Mutex::new(Vec::new()),
                 retired_usage: std::sync::Mutex::new(Vec::new()),
@@ -593,6 +601,15 @@ impl SupervisorChildSessions {
     ///
     /// Panics when the name mutex is poisoned (a holder panicked while
     /// holding the lock).
+    /// Install the probe that answers the parent's live serving model.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the probe mutex is poisoned.
+    pub fn set_live_model_probe(&self, probe: LiveModelProbe) {
+        *self.inner.live_model.lock().expect("live model lock") = Some(probe);
+    }
+
     pub fn set_parent_session_name(&self, name: Option<String>) {
         *self
             .inner
@@ -856,6 +873,15 @@ impl SupervisorChildSessions {
 }
 
 impl SupervisorChildSessionsInner {
+    /// The parent's live model selector, when the engine installed a probe.
+    pub(crate) fn live_parent_model(&self) -> Option<String> {
+        self.live_model
+            .lock()
+            .expect("live model lock")
+            .as_ref()
+            .and_then(|probe| probe())
+    }
+
     /// Fire the settle hook off-thread (the settle sites run inside
     /// watcher tasks; the hook owns its own scheduling). The funnel marks
     /// the record settled and wakes the barrier only after the terminal

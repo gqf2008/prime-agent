@@ -924,10 +924,25 @@ impl SessionEngine for AgentSessionEngine {
             .lock()
             .expect("semantic identity lock") = semantic_identity;
         if let Some(children) = &self.children {
+            // The parent's model is what a model-less spawn inherits: the live
+            // serving model when there is one, else the configured selection.
+            let parent_model = self
+                .provider_target
+                .read()
+                .expect("provider target lock")
+                .as_ref()
+                .map(|target| format!("{}/{}", target.model.provider, target.model.id))
+                .or_else(|| {
+                    let selection = self.current_selection();
+                    selection.model.map(|model| match selection.provider {
+                        Some(provider) => format!("{provider}/{model}"),
+                        None => model,
+                    })
+                });
             let parent = ParentIdentity {
                 rlm_depth: identity.rlm_depth,
                 rlm_max_depth: max_depth.min(u64::from(u32::MAX)) as u32,
-                model: None,
+                model: parent_model,
                 cwd: identity.cwd.clone(),
                 session_id: identity.session_id.clone(),
                 session_file: identity.session_file.clone(),
@@ -935,6 +950,16 @@ impl SessionEngine for AgentSessionEngine {
                 child_script: identity.child_script,
             };
             children.set_identity(parent);
+            // A model-less spawn reads the live target, so the identity
+            // snapshot is only the fallback.
+            let target = std::sync::Arc::clone(&self.provider_target);
+            children.set_live_model_probe(std::sync::Arc::new(move || {
+                target
+                    .read()
+                    .expect("provider target lock")
+                    .as_ref()
+                    .map(|target| format!("{}/{}", target.model.provider, target.model.id))
+            }));
         }
         Ok(())
     }

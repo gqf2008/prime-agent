@@ -24,18 +24,24 @@ async fn resolve_child_model_allowlisted(
     target: &str,
 ) -> Result<String> {
     let identity = this.identity.lock().expect("identity lock").clone();
+    // The live serving model wins over the identity snapshot: a `/model`
+    // switch changes what a model-less spawn must inherit.
+    let parent_model = this.live_parent_model().or_else(|| identity.model.clone());
     let cwd = identity.cwd.clone().unwrap_or_else(|| "/".to_string());
     let load_cwd = cwd.clone();
     let agent_dir = this.agent_dir.clone();
-    let allowlist = tokio::task::spawn_blocking(move || {
-        crate::model_allowlist::load(Path::new(&load_cwd), &agent_dir)
+    let (allowlist, subagent_default) = tokio::task::spawn_blocking(move || {
+        let allowlist = crate::model_allowlist::load(Path::new(&load_cwd), &agent_dir);
+        let settings = pa_core::settings::SettingsManager::create(Path::new(&load_cwd), &agent_dir);
+        (allowlist, settings.get_subagent_default_model())
     })
     .await
     .context("the allowlist load task join failed")?;
     match resolve_child_model(
         &this.agent_dir,
         reference,
-        identity.model.as_deref(),
+        parent_model.as_deref(),
+        subagent_default.as_deref(),
         target,
         &allowlist,
     ) {

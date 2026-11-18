@@ -724,10 +724,14 @@ impl RlmSubagentHost for InlineHost {
                     thinking,
                 )
             } else {
+                let subagent_default =
+                    pa_core::settings::SettingsManager::create(&config.cwd, &config.agent_dir)
+                        .get_subagent_default_model();
                 let selector = pa_daemon::rlm_child_model::resolve_child_model_unchecked(
                     &config.agent_dir,
                     request.model.as_deref(),
                     node.model_selector.lock().unwrap().as_deref(),
+                    subagent_default.as_deref(),
                     "subagent",
                 )
                 .map_err(|error| anyhow::anyhow!("{error:#}"))?;

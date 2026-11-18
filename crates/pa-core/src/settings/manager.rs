@@ -583,7 +583,9 @@ impl SettingsManager {
         self.merged.default_model.as_deref()
     }
 
-    /// Model for `rlm.spawn` without a pinned model; unset inherits parent.
+    /// Model for a model-less `rlm.spawn` / `rlm.create_session`; unset
+    /// inherits the parent. A configured value that cannot resolve fails
+    /// the spawn (never a silent fallback to the parent).
     #[must_use]
     pub fn get_subagent_default_model(&self) -> Option<String> {
         self.merged
