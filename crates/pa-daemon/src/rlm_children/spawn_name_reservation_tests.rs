@@ -193,6 +193,18 @@ async fn sessions_with_gated_supervisor_in(
     sessions
 }
 
+/// The child create's model fields, and the only part of the payload a test
+/// may touch.
+///
+/// HARD RULE: never print, format or assert on the whole create command — its
+/// `launchEnv` carries the parent process environment (provider keys, tokens).
+/// Assertions compare named fields only, so a failure message cannot leak it.
+fn child_create_model(command: &Value) -> (String, String) {
+    let provider = command["config"]["provider"].as_str().unwrap_or_default();
+    let model = command["config"]["model"].as_str().unwrap_or_default();
+    (provider.to_string(), model.to_string())
+}
+
 fn write_child_catalog(base: &std::path::Path) {
     std::fs::create_dir_all(base.join("agent")).unwrap();
     std::fs::write(
@@ -236,14 +248,12 @@ async fn a_model_less_spawn_uses_the_configured_subagent_default() {
     .await;
     let spawned = tokio::spawn(sessions.spawn(spawn_request("pinned", "go")));
     let command = create_seen_rx.recv().await.expect("the create arrives");
-    // Never print the whole command: its launchEnv carries the parent's
-    // environment. Only the model fields are this test's concern.
+    let (provider, model) = child_create_model(&command);
     assert_eq!(
-        command["config"]["provider"],
-        json!("mock"),
+        (provider.as_str(), model.as_str()),
+        ("mock", "mock-2"),
         "the configured default pins the child"
     );
-    assert_eq!(command["config"]["model"], json!("mock-2"));
     verdict_tx.send(true).expect("admit the create");
     let _ = spawned.await.expect("spawn task").expect("admission");
 }
@@ -266,12 +276,12 @@ async fn a_model_less_spawn_inherits_the_parent_model() {
     .await;
     let spawned = tokio::spawn(sessions.spawn(spawn_request("inherits", "go")));
     let command = create_seen_rx.recv().await.expect("the create arrives");
+    let (provider, model) = child_create_model(&command);
     assert_eq!(
-        command["config"]["provider"],
-        json!("mock"),
+        (provider.as_str(), model.as_str()),
+        ("mock", "mock-1"),
         "an unconfigured child inherits the parent"
     );
-    assert_eq!(command["config"]["model"], json!("mock-1"));
     verdict_tx.send(true).expect("admit the create");
     let _ = spawned.await.expect("spawn task").expect("admission");
 }
@@ -296,10 +306,10 @@ async fn a_live_model_probe_overrides_the_identity_snapshot() {
     sessions.set_live_model_probe(std::sync::Arc::new(|| Some("mock/mock-2".to_string())));
     let spawned = tokio::spawn(sessions.spawn(spawn_request("live", "go")));
     let command = create_seen_rx.recv().await.expect("the create arrives");
-    assert_eq!(command["config"]["provider"], json!("mock"));
+    let (provider, model) = child_create_model(&command);
     assert_eq!(
-        command["config"]["model"],
-        json!("mock-2"),
+        (provider.as_str(), model.as_str()),
+        ("mock", "mock-2"),
         "the live probe wins over the identity snapshot"
     );
     verdict_tx.send(true).expect("admit the create");
