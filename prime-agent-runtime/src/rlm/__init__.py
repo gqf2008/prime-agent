@@ -135,7 +135,8 @@ class RLMInboxMessage:
     notice, or the job id for a heartbeat fire; `meta` carries the
     notice's metadata (pid/command/exitCode/exitClass, the run's
     fields, the message id, sender and family relationship, the child's
-    status and ids, or the fired heartbeat's job fields).
+    status and ids, the fired heartbeat's job fields, or an MCP
+    notification frame's entries).
     """
 
     id: str
@@ -585,8 +586,14 @@ def _inbox_message_from_payload(payload: Any) -> RLMInboxMessage:
     sender = payload.get("sender")
     if sender is not None and not isinstance(sender, str):
         raise RuntimeError("rlm.inbox.read entry has invalid sender")
+    # The meta is class-specific JSON: an object for most notices, and the
+    # notification frame's entry list for `mcp-notice`. A read already
+    # drained the message from the inbox, so the parser never rejects a
+    # well-typed host payload over its shape.
     meta = payload.get("meta")
-    if not isinstance(meta, dict):
+    if meta is not None and not isinstance(
+        meta, (dict, list, str, int, float, bool)
+    ):
         raise RuntimeError("rlm.inbox.read entry has invalid meta")
     return RLMInboxMessage(
         id=message_id,

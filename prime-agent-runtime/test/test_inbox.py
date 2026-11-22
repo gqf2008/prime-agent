@@ -68,6 +68,28 @@ class RlmInboxReadTest(unittest.TestCase):
             {"type": "blocks", "blocks": [{"type": "text", "text": "full result"}]},
         )
 
+    def test_an_mcp_notice_keeps_its_frame_meta(self) -> None:
+        # The MCP frame's entries are a list, not the object most classes
+        # carry; a read already drained the message, so the parser must keep
+        # it rather than reject the shape.
+        frame = [{"server": "notion", "kind": "resource_updated", "summary": "notion://page/1"}]
+        wire = [
+            {
+                "id": "inbox-1",
+                "class": "mcp-notice",
+                "arrivedAtMs": 10,
+                "sender": "notion",
+                "text": "[notion] resource_updated: notion://page/1",
+                "meta": frame,
+            }
+        ]
+        host_request = AsyncMock(return_value={"messages": wire})
+        with patch.object(rlm_module, "host_request", host_request), patch.object(rlm_module, "emit", Mock()):
+            messages = asyncio.run(rlm_module.rlm.inbox.read(inbox_class="mcp-notice"))
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].inbox_class, "mcp-notice")
+        self.assertEqual(messages[0].meta, frame)
+
     def test_rejects_bool_as_timestamp(self) -> None:
         with self.assertRaisesRegex(TypeError, "since_ms must be an int"):
             asyncio.run(rlm_module.inbox.read(since_ms=True))
