@@ -68,9 +68,11 @@ rendered = await mcp.get_prompt("notion", "summarize", {"text": "..."})
 
 ## Server notifications
 
-A connected server can push notifications on the same session. Significant
-ones land in the conversation as `[mcp_notification]` rows and wake you;
-informational ones are buffered for you to pull.
+A connected server can push notifications on the same session. They land in
+this session's inbox as the `mcp-notice` class: significant ones announce a
+batched arrival that wakes you, informational ones wait silently for a read
+(`rlm.inbox.read(inbox_class="mcp-notice")`). The per-server buffer stays
+pullable too:
 
 ```python
 page = await mcp.notifications(server="notion", since=last_seq)   # {notifications, nextSince, dropped}

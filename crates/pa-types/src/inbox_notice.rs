@@ -18,6 +18,10 @@ pub const INBOX_CLASS_CHILD_EXITED: &str = "child-exited";
 pub const INBOX_CLASS_CHILD_FAILED: &str = "child-failed";
 /// The heartbeat class label: one fired scheduled heartbeat's prompt.
 pub const INBOX_CLASS_HEARTBEAT: &str = "heartbeat";
+/// The MCP-notice class label: one forwarded MCP server notification frame
+/// (a significant kind, which also announces an arrival, or a coalesced
+/// informational batch, which waits for a read).
+pub const INBOX_CLASS_MCP_NOTICE: &str = "mcp-notice";
 
 /// The `customType` of the inbox notice rows (`arrival` and `reminder`).
 pub const INBOX_NOTICE_CUSTOM_TYPE: &str = "inbox_notice";

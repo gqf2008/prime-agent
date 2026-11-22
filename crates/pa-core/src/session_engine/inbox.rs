@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 use crate::kernel::shared::{host_handler, HostRequestHandlers};
 
 use super::bash_notices::KernelNotice;
+use super::mcp_notices::MCP_NOTIFICATION_CUSTOM_TYPE;
 use super::messages::{ASYNC_BASH_COMPLETION_CUSTOM_TYPE, FACTORY_PROGRESS_NOTICE_CUSTOM_TYPE};
 use pa_types::ai::UserContent;
 use pa_types::session::CustomMessage;
@@ -37,7 +38,7 @@ pub const INBOX_PERSISTENCE_ERROR_CLAUSE: &str =
 
 use pa_types::inbox_notice::{
     INBOX_CLASS_BASH_DONE, INBOX_CLASS_CHILD_EXITED, INBOX_CLASS_CHILD_FAILED,
-    INBOX_CLASS_FACTORY_PROGRESS, INBOX_CLASS_HEARTBEAT,
+    INBOX_CLASS_FACTORY_PROGRESS, INBOX_CLASS_HEARTBEAT, INBOX_CLASS_MCP_NOTICE,
 };
 
 /// The coalescing batch state the daemon's notice sink owns: the
@@ -136,6 +137,7 @@ pub fn inbox_class_for_custom_type(custom_type: &str) -> Option<&'static str> {
     match custom_type {
         ASYNC_BASH_COMPLETION_CUSTOM_TYPE => Some(INBOX_CLASS_BASH_DONE),
         FACTORY_PROGRESS_NOTICE_CUSTOM_TYPE => Some(INBOX_CLASS_FACTORY_PROGRESS),
+        MCP_NOTIFICATION_CUSTOM_TYPE => Some(INBOX_CLASS_MCP_NOTICE),
         _ => None,
     }
 }
@@ -166,6 +168,13 @@ pub fn inbox_notice_fields(notice: &KernelNotice) -> Option<InboxNotice> {
     let sender = match class {
         INBOX_CLASS_BASH_DONE => meta.get("command").and_then(Value::as_str),
         INBOX_CLASS_FACTORY_PROGRESS => meta.get("runId").and_then(Value::as_str),
+        // The MCP frame's entries are an array; the first entry names the
+        // server that pushed it.
+        INBOX_CLASS_MCP_NOTICE => meta
+            .as_array()
+            .and_then(|entries| entries.first())
+            .and_then(|entry| entry.get("server"))
+            .and_then(Value::as_str),
         _ => None,
     };
     Some(InboxNotice {
@@ -1554,6 +1563,43 @@ mod tests {
         assert_eq!(fields.class, INBOX_CLASS_FACTORY_PROGRESS);
         assert_eq!(fields.sender.as_deref(), Some("run-7"));
         assert!(fields.text.contains("budget-exceeded"));
+    }
+
+    /// An MCP notification frame routes to the `mcp-notice` class: the first
+    /// entry names the pushing server, the row text is the message, and the
+    /// frame's entries ride as metadata.
+    #[test]
+    fn an_mcp_notification_frame_routes_to_the_inbox() {
+        let entries = json!([{
+            "server": "notion",
+            "kind": "resource_updated",
+            "summary": "notion://page/1",
+            "content": "hello"
+        }]);
+        let notice = KernelNotice {
+            row: CustomMessage {
+                custom_type: MCP_NOTIFICATION_CUSTOM_TYPE.to_string(),
+                content: UserContent::Text(
+                    "[notion] resource_updated: notion://page/1
+hello"
+                        .to_string(),
+                ),
+                display: true,
+                details: Some(entries.clone()),
+                timestamp: 0,
+                rest: pa_types::JsonMap::default(),
+            },
+            preview_label: "mcp",
+        };
+        assert_eq!(
+            inbox_class_for_custom_type(MCP_NOTIFICATION_CUSTOM_TYPE),
+            Some(INBOX_CLASS_MCP_NOTICE)
+        );
+        let fields = inbox_notice_fields(&notice).expect("the frame routes");
+        assert_eq!(fields.class, INBOX_CLASS_MCP_NOTICE);
+        assert_eq!(fields.sender.as_deref(), Some("notion"));
+        assert!(fields.text.contains("resource_updated"), "{}", fields.text);
+        assert_eq!(fields.meta, entries);
     }
 
     /// The arrival notice: one count row per batch. One message names

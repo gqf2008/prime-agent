@@ -29,7 +29,7 @@ The harness often sends messages to the agent. These are user messages starting 
 - `rlm.inbox.count() -> RLMInboxCount`: the waiting count, oldest arrival, and per-class counts, without draining
 - `RLMInboxMessage`
   - `id: str`
-  - `inbox_class: Literal["bash-done", "factory-progress", "agent-message", "child-exited", "child-failed", "heartbeat"]`
+  - `inbox_class: Literal["bash-done", "factory-progress", "agent-message", "child-exited", "child-failed", "heartbeat", "mcp-notice"]`
   - `arrived_at_ms: int`: milliseconds since the epoch
   - `sender: str | None`: the command, factory run id, agent name, child session name, or heartbeat job id
   - `text: str`: the full notice
@@ -204,12 +204,12 @@ A connected server may ask this machine's model for a completion (MCP sampling).
 
 A server may also ask the user a question (MCP elicitation). It arrives as an `[mcp_elicitation]` row carrying the exact answer syntax — `/elicit accept <value>`, `/elicit decline`, `/elicit cancel` — and the user answers it; nobody else can, and a request nobody answers is declined on a timeout. The answer is the user's, never yours: do not issue `/elicit` on their behalf, and treat a declined or cancelled request as a refusal to continue down that path.
 
-Server notifications (tool/prompt/resource inventory changes, subscribed resource updates, log lines, progress) are buffered per server and also land as `[mcp_notification]` rows in the conversation. Inventory changes and resource updates wake you with that row; log lines and progress do not. Pull what you missed with:
+Server notifications (tool/prompt/resource inventory changes, subscribed resource updates, log lines, progress) are buffered per server and also land in this session's inbox as the `mcp-notice` class. Inventory changes and resource updates announce a batched arrival that wakes you; log lines and progress wait silently for a read. Pull what you missed with:
 - `mcp.notifications(server: str | None = None, kind: str | None = None, since: int | None = None, limit: int = 50) -> dict`: `{notifications, nextSince, dropped}`; pass a previous `nextSince` as `since` to continue, and treat a non-zero `dropped` as a gap you missed
 - `mcp.notification_status() -> dict`: per-server buffered/dropped/forwarded counters
 - `mcp.clear_notifications(server: str | None = None) -> dict`: drop the buffer
 
-A `resource_updated` row carries the changed resource's content: the harness re-reads subscribed resources for you, so act on that text directly. Call `mcp.read_resource` only when the content is missing (a gap, a truncation note, or a non-zero `dropped` count). After a `tools_changed` row, re-list the tools.
+A `resource_updated` notice carries the changed resource's content: the harness re-reads subscribed resources for you, so act on that text directly. Call `mcp.read_resource` only when the content is missing (a gap, a truncation note, or a non-zero `dropped` count). After a `tools_changed` row, re-list the tools.
 
 Subscriptions (when the server advertises them) make `resources/updated` arrive for a URI:
 - `mcp.subscribe_resource(server: str, uri: str) -> dict`

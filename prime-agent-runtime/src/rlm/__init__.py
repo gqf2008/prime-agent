@@ -127,6 +127,7 @@ class RLMInboxMessage:
     """One machine-generated notice waiting in the session inbox.
 
     `inbox_class` is `bash-done`, `factory-progress`, `agent-message`,
+    `mcp-notice`,
     `child-exited`, `child-failed`, or `heartbeat`; `arrived_at_ms` is
     the epoch-ms arrival time; `sender` is the command for a bash
     completion, the run id for a factory milestone, the agent name for

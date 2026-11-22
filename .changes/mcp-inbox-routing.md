@@ -1,0 +1,1 @@
+- MCP server notifications now land in the session's agent inbox (`mcp-notice` class): significant kinds announce a batched arrival that wakes the model, informational ones (log lines, progress) wait silently for a read — the same durable, pausable and clearable path as bash completions and agent messages, instead of a separate `[mcp_notification]` row.

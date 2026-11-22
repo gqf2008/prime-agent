@@ -721,13 +721,39 @@ impl Worker {
                     );
                 });
                 concrete.set_kernel_notice_sinks(notice_sink, consumed);
-                // The MCP notification row seam: informational server pushes
-                // land as durable rows (persist + broadcast) without waking a
-                // turn; significant kinds arrive through the notice sink above.
+                // The MCP notification row seam. With the agent inbox enabled
+                // (the default) an informational server push lands in the
+                // session's durable inbox — readable, pausable and clearable
+                // like every other notice — without waking a turn; significant
+                // kinds arrive through the notice sink above and announce a
+                // batched arrival there. Without the inbox the row stays a
+                // transcript row (persist + broadcast).
                 let row_core = Arc::clone(&core);
                 let row_events = events.clone();
+                let row_engine = std::sync::Arc::downgrade(concrete);
+                let row_agent_dir = config.agent_dir.clone();
                 let mcp_row_sink: pa_core::session_engine::mcp_notices::McpNotificationRowSink =
                     Arc::new(move |message| {
+                        if let Some(engine) = row_engine.upgrade() {
+                            if crate::agent_inbox::inbox_enabled(&engine.cwd(), &row_agent_dir) {
+                                if let Some(inbox) = engine.inbox() {
+                                    let notice =
+                                        pa_core::session_engine::bash_notices::KernelNotice {
+                                            row: message.clone(),
+                                            preview_label: "mcp",
+                                        };
+                                    if let Some(fields) =
+                                        pa_core::session_engine::inbox::inbox_notice_fields(&notice)
+                                    {
+                                        let now = pa_core::autonomous::now_millis();
+                                        if engine.push_to_live_inbox(&inbox, fields, now).is_some()
+                                        {
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         let value = crate::session_commands::custom_message_value(&message);
                         let mut core = row_core.lock().unwrap();
                         summary::persist_custom_row(&mut core, &value);
