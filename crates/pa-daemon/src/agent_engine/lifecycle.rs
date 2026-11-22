@@ -144,6 +144,8 @@ impl AgentSessionEngine {
             mcp_counters: std::sync::Arc::new(std::sync::OnceLock::new()),
             mcp_sampling_calls: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
             bash_consumed_sink: std::sync::Mutex::new(None),
+            inbox: std::sync::Mutex::new(None),
+            inbox_read_hook: std::sync::Mutex::new(None),
             goal_queue_purge: std::sync::Mutex::new(None),
             goal_backoff_wake_job_id: std::sync::Mutex::new(None),
             stale_goal_terminal_pending: std::sync::Mutex::new(None),
@@ -152,6 +154,7 @@ impl AgentSessionEngine {
             session_file,
             selection: std::sync::RwLock::new(selection.clone()),
             restored_model: std::sync::Mutex::new(None),
+            model_resolution_warning: std::sync::Mutex::default(),
             startup_scope: std::sync::Mutex::new(None),
             initial_selection: std::sync::RwLock::new(selection),
             effective_thinking: std::sync::RwLock::new(None),
@@ -712,6 +715,10 @@ impl AgentSessionEngine {
             .quota_park
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        // The retired session's inbox goes with it: a replacement's
+        // build installs the next session's store, so a retired store
+        // can never serve reads or take appends across the swap.
+        self.clear_inbox();
         // The retired session's provider target goes with it: a pre-build demand seam resolves the
         // CURRENT model.
         *self.provider_target.write().expect("provider target lock") = None;
@@ -997,6 +1004,25 @@ impl AgentSessionEngine {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
+        // The session's agent inbox (the worker's notice sink routes
+        // `bash.completed`/`factory.progress` into it; the kernel reads
+        // it through `rlm.inbox.*`): the journal lives in the session's
+        // own artifact dir — the same per-session dir the kernel state
+        // and the harness state use — so a restart replays.
+        let inbox_dir = session_file
+            .as_deref()
+            .and_then(pa_core::session_engine::harness_digest::session_artifact_dir_for_log);
+        // A failed build leaves its published store behind: the next
+        // attempt over the same journal reuses it instead of racing a
+        // fresh open's compaction against its appends.
+        let inbox = pa_core::session_engine::inbox::SessionInbox::open_or_reuse(
+            self.inbox().as_ref(),
+            inbox_dir.as_deref(),
+        );
+        if let Some(hook) = self.inbox_read_hook() {
+            inbox.set_read_hook(hook);
+        }
+        self.set_inbox(std::sync::Arc::clone(&inbox));
         // The engine session stays non-persisted (the worker owns the
         // durable file); the configured session dir leads, the file's
         // parent is the fallback.
@@ -1114,8 +1140,6 @@ impl AgentSessionEngine {
             tools: vec![],
             custom_system_prompt: create_resources.system_prompt,
             prompt_guidelines: create_resources.append_system_prompt,
-            generic_mcp_servers: vec![],
-            allow_recursion: None,
             session_manager: Some(session_manager),
             extra_host_handlers: self.extra_host_handlers(),
             conversation_log_path: session_file,
@@ -1125,6 +1149,7 @@ impl AgentSessionEngine {
             rlm_subagent_host: self.children.clone().map(|children| {
                 children as Arc<dyn pa_core::session_engine::rlm_host::RlmSubagentHost>
             }),
+            inbox: Some(inbox),
             rlm_usage_store,
             progress_note_emit,
             rlm_depth: Some(self.rlm_depth.load(std::sync::atomic::Ordering::Relaxed)),

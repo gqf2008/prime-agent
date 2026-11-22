@@ -73,7 +73,10 @@ pub use config::AgentEngineConfig;
 pub(crate) use config::AutonomousAdmission;
 pub(crate) use config::CreateSessionResources;
 pub use config::SupervisorLinkConfig;
-use config::{GoalRuntimeHandles, ProducerUsageSink, RestoredSessionModel, StartupScope};
+use config::{
+    GoalRuntimeHandles, ModelResolutionWarning, ProducerUsageSink, RestoredSessionModel,
+    StartupScope,
+};
 
 mod reload;
 mod session_engine_impl;
@@ -173,6 +176,15 @@ pub struct AgentSessionEngine {
     >,
     /// Completions this session served, against the per-session cap.
     pub(crate) mcp_sampling_calls: std::sync::Arc<std::sync::atomic::AtomicU32>,
+
+    /// The current session's agent inbox store (the notice sink routes
+    /// `bash.completed`/`factory.progress` messages into it); set at
+    /// every session build.
+    pub(crate) inbox:
+        std::sync::Mutex<Option<std::sync::Arc<pa_core::session_engine::inbox::SessionInbox>>>,
+    /// The worker's post-drain inbox seam (see `set_inbox_read_hook`).
+    pub(crate) inbox_read_hook:
+        std::sync::Mutex<Option<pa_core::session_engine::inbox::InboxReadHook>>,
     pub(crate) quota_park: std::sync::Arc<std::sync::Mutex<Option<QuotaParkState>>>,
     /// Whether the settled turn parked: the park's pause, not the goal's death.
     pub(crate) quota_parked_this_run: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -192,6 +204,7 @@ pub struct AgentSessionEngine {
     /// for: a revived session's saved model (or the fallback message); an
     /// explicit flag wins.
     restored_model: std::sync::Mutex<Option<RestoredSessionModel>>,
+    model_resolution_warning: std::sync::Mutex<ModelResolutionWarning>,
     /// The create-time `--models` scope (see [`config::StartupScope`]);
     /// `None` keeps the unscoped chain.
     startup_scope: std::sync::Mutex<Option<StartupScope>>,

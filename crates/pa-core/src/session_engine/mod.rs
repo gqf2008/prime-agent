@@ -23,11 +23,13 @@ pub mod harness_digest;
 pub mod headless;
 pub mod host_requests;
 pub mod image_model_routing;
+pub mod inbox;
 pub mod ipython_state;
 pub mod late_sent_messages;
 pub mod mcp_notices;
 pub mod mcp_sampling;
 pub mod messages;
+pub mod model_resolution_notice;
 pub mod model_usage;
 pub mod provider_adapter;
 pub mod provider_failover;
@@ -82,6 +84,12 @@ pub enum PromptOutcome {
     /// Input recognized as a session command; execution is the session
     /// engine's job.
     SessionCommand(SessionSlashCommand),
+    /// The session was busy and the delivery's streaming behavior parked
+    /// the row on the agent's lane instead of running it (the TS
+    /// `queueIfBusy` contract): the running turn's next boundary — or the
+    /// next run's poll — delivers it. The caller must not report the
+    /// parked row as a finished turn.
+    Queued,
 }
 
 /// Options for `AgentSession::prompt`.
