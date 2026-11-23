@@ -412,7 +412,7 @@ class McpRegistryTest(unittest.TestCase):
         self.assertEqual(
             str(caught.exception),
             "MCP credentials for 'github' are not available. Ask the user to connect it "
-            "(/plugins or /mcp login github); do not ask them to set environment variables.",
+            "(/plugins or /mcp, then select github); do not ask them to set environment variables.",
         )
         with mock.patch.object(mcp, "_read_auth", return_value=None):
             with self.assertRaises(mcp.McpCredentialsUnavailable):
@@ -1049,7 +1049,7 @@ class McpDiscoveryInventoryTest(unittest.TestCase):
         generation.server = "a"
         broken = mcp.McpCredentialsUnavailable(
             "MCP credentials for 'b' are not available. Ask the user to connect it"
-            " (/plugins or /mcp login b); do not ask them to set environment variables."
+            " (/plugins or /mcp, then select b); do not ask them to set environment variables."
         )
 
         async def get_locked(server):
