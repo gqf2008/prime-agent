@@ -26,6 +26,18 @@ python -m unittest test.test_mcp -v
 | `test_harness` | `HarnessStateTest::test_dead_lock_is_reclaimed_without_old_owner_cleanup` errors; `test_save_preserves_restrictive_file_mode` and `test_save_temp_file_is_never_looser_than_the_destination` fail | POSIX file modes (0700/0600) and lock-file semantics; Windows has neither | yes |
 | `test_mcp` | `test_real_stdio_startup_diagnostic_is_safe_bounded_and_reaped` and `test_reload_reaps_real_acp_stdio_process` error with `OSError: [WinError 87]` / `SystemError: kill returned a result with an exception set` | the tests call `os.kill(pid, 0)`, which Windows does not support | yes |
 
+## Rust workspace failures that are not on this machine's baseline
+
+One upstream test is platform-sensitive in a way the `pa-daemon` baseline does
+not cover: `crates/pa-core/src/session_engine/inbox.rs`'s
+`the_withdrawal_journals_before_the_store_remove` reads its own file with
+`include_str!` and splits a function body on `"
+    }
+"`. A CRLF checkout
+(this machine's default) cannot match that pattern, so the test panics with
+"the withdrawal closes its section" on Windows while passing on the LF CI
+checkout. It is upstream's test, unmodified here.
+
 ## The Rust workspace: `cargo test -p pa-daemon --lib`
 
 On this machine that command ends with **42 failed / N passed** (1066 passed at `main`
