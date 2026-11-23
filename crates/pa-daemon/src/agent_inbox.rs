@@ -162,6 +162,33 @@ impl AgentSessionEngine {
     }
 }
 
+/// Route one informational MCP notification frame into the session's live
+/// inbox: push only — no steer, no wake. Returns false when the inbox is
+/// disabled, the session has none, or the store was retired, so the caller
+/// keeps its transcript-row behaviour.
+pub(crate) fn push_mcp_notice(
+    engine: &crate::agent_engine::AgentSessionEngine,
+    agent_dir: &Path,
+    message: &pa_types::session::CustomMessage,
+) -> bool {
+    if !inbox_enabled(&engine.cwd(), agent_dir) {
+        return false;
+    }
+    let Some(inbox) = engine.inbox() else {
+        return false;
+    };
+    let notice = pa_core::session_engine::bash_notices::KernelNotice {
+        row: message.clone(),
+        preview_label: "mcp",
+    };
+    let Some(fields) = pa_core::session_engine::inbox::inbox_notice_fields(&notice) else {
+        return false;
+    };
+    engine
+        .push_to_live_inbox(&inbox, fields, pa_core::autonomous::now_millis())
+        .is_some()
+}
+
 /// `agentInbox.enabled` (default on): the kill switch that restores
 /// direct notice-row steering.
 pub(crate) fn inbox_enabled(cwd: &Path, agent_dir: &Path) -> bool {
@@ -248,4 +275,99 @@ pub(crate) fn spawn_inbox_reminder(
             );
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    fn engine_with_settings(
+        dir: &std::path::Path,
+        settings: &serde_json::Value,
+    ) -> Arc<crate::agent_engine::AgentSessionEngine> {
+        let agent_dir = dir.join("agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(agent_dir.join("settings.json"), settings.to_string()).unwrap();
+        Arc::new(
+            crate::agent_engine::AgentSessionEngine::new(crate::agent_engine::AgentEngineConfig {
+                cwd: dir.to_path_buf(),
+                agent_dir,
+                provider: None,
+                model: None,
+                api_key: None,
+                thinking: None,
+                session_dir: None,
+                session_file: None,
+                faux_script: None,
+                supervisor_link: None,
+                telemetry_disabled: None,
+                cron_store: None,
+                queued_steering_probe: None,
+            })
+            .unwrap(),
+        )
+    }
+
+    fn mcp_row() -> pa_types::session::CustomMessage {
+        pa_types::session::CustomMessage {
+            custom_type: pa_core::session_engine::mcp_notices::MCP_NOTIFICATION_CUSTOM_TYPE
+                .to_string(),
+            content: pa_types::ai::UserContent::Text("[notion] logging: warn: slow".to_string()),
+            display: true,
+            details: Some(json!([{
+                "server": "notion", "kind": "logging", "summary": "warn: slow"
+            }])),
+            timestamp: 0,
+            rest: pa_types::JsonMap::default(),
+        }
+    }
+
+    fn live_inbox(
+        engine: &crate::agent_engine::AgentSessionEngine,
+    ) -> Arc<pa_core::session_engine::inbox::SessionInbox> {
+        let inbox = Arc::new(pa_core::session_engine::inbox::SessionInbox::in_memory());
+        engine.set_inbox(Arc::clone(&inbox));
+        inbox
+    }
+
+    /// An informational MCP notice lands in the live inbox as `mcp-notice`
+    /// and the caller is told not to write a transcript row.
+    #[test]
+    fn an_informational_mcp_notice_lands_in_the_inbox() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let engine = engine_with_settings(dir.path(), &json!({}));
+        let inbox = live_inbox(&engine);
+        let agent_dir = engine.config.agent_dir.clone();
+        assert!(push_mcp_notice(&engine, &agent_dir, &mcp_row()));
+        let (count, _, classes) = inbox.count();
+        assert_eq!(count, 1);
+        assert_eq!(
+            classes.get(pa_types::inbox_notice::INBOX_CLASS_MCP_NOTICE),
+            Some(&1)
+        );
+    }
+
+    /// No live inbox (a retired store, or a session that never built one):
+    /// the caller keeps its transcript row.
+    #[test]
+    fn without_a_live_inbox_the_row_is_kept() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let engine = engine_with_settings(dir.path(), &json!({}));
+        let agent_dir = engine.config.agent_dir.clone();
+        assert!(!push_mcp_notice(&engine, &agent_dir, &mcp_row()));
+    }
+
+    /// `agentInbox.enabled: false` is the kill switch back to direct rows.
+    #[test]
+    fn the_kill_switch_keeps_the_row() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let engine =
+            engine_with_settings(dir.path(), &json!({ "agentInbox": { "enabled": false } }));
+        let inbox = live_inbox(&engine);
+        let agent_dir = engine.config.agent_dir.clone();
+        assert!(!push_mcp_notice(&engine, &agent_dir, &mcp_row()));
+        assert_eq!(inbox.count().0, 0, "nothing enters a disabled inbox");
+    }
 }

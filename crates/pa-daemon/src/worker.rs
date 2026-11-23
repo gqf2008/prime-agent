@@ -735,23 +735,12 @@ impl Worker {
                 let mcp_row_sink: pa_core::session_engine::mcp_notices::McpNotificationRowSink =
                     Arc::new(move |message| {
                         if let Some(engine) = row_engine.upgrade() {
-                            if crate::agent_inbox::inbox_enabled(&engine.cwd(), &row_agent_dir) {
-                                if let Some(inbox) = engine.inbox() {
-                                    let notice =
-                                        pa_core::session_engine::bash_notices::KernelNotice {
-                                            row: message.clone(),
-                                            preview_label: "mcp",
-                                        };
-                                    if let Some(fields) =
-                                        pa_core::session_engine::inbox::inbox_notice_fields(&notice)
-                                    {
-                                        let now = pa_core::autonomous::now_millis();
-                                        if engine.push_to_live_inbox(&inbox, fields, now).is_some()
-                                        {
-                                            return;
-                                        }
-                                    }
-                                }
+                            if crate::agent_inbox::push_mcp_notice(
+                                &engine,
+                                &row_agent_dir,
+                                &message,
+                            ) {
+                                return;
                             }
                         }
                         let value = crate::session_commands::custom_message_value(&message);
